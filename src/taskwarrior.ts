@@ -1,0 +1,318 @@
+import { runCommand } from './exec.js';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export type TaskStatus = 'pending' | 'completed' | 'deleted' | 'waiting' | 'recurring';
+export type Priority = 'H' | 'M' | 'L';
+
+export interface TaskAnnotation {
+  entry: string;
+  description: string;
+}
+
+export interface Task {
+  id: number;
+  uuid: string;
+  description: string;
+  status: TaskStatus;
+  entry: string;
+  modified: string;
+  urgency: number;
+  project?: string;
+  priority?: Priority;
+  tags?: string[];
+  due?: string;
+  scheduled?: string;
+  wait?: string;
+  until?: string;
+  depends?: string[];
+  annotations?: TaskAnnotation[];
+  start?: string;
+  end?: string;
+  owner_agent?: string;
+  lease_until?: string;
+  claimed_at?: string;
+  last_renewed_at?: string;
+}
+
+export interface FilterParams {
+  status?: TaskStatus | 'all';
+  project?: string;
+  tags?: string[];
+  priority?: Priority;
+  dueBefore?: string;
+  dueAfter?: string;
+}
+
+export interface TaskFields {
+  description?: string;
+  project?: string;
+  priority?: Priority;
+  tags?: string[];
+  removeTags?: string[];
+  due?: string;
+  scheduled?: string;
+  wait?: string;
+  until?: string;
+  depends?: string[];
+}
+
+// ─── Arg builders ─────────────────────────────────────────────────────────────
+
+export function buildModifyArgs(fields: TaskFields): string[] {
+  const args: string[] = [];
+
+  if (fields.description !== undefined) args.push(fields.description);
+  if (fields.project !== undefined) args.push(`project:${fields.project}`);
+  if (fields.priority !== undefined) args.push(`priority:${fields.priority}`);
+  if (fields.due !== undefined) args.push(`due:${fields.due}`);
+  if (fields.scheduled !== undefined) args.push(`scheduled:${fields.scheduled}`);
+  if (fields.wait !== undefined) args.push(`wait:${fields.wait}`);
+  if (fields.until !== undefined) args.push(`until:${fields.until}`);
+
+  for (const tag of fields.tags ?? []) args.push(`+${tag}`);
+  for (const tag of fields.removeTags ?? []) args.push(`-${tag}`);
+  for (const dep of fields.depends ?? []) args.push(`depends:${dep}`);
+
+  return args;
+}
+
+function buildFilterArgs(filter: FilterParams): string[] {
+  const args: string[] = [];
+
+  if (filter.status && filter.status !== 'all') args.push(`status:${filter.status}`);
+  if (filter.project) args.push(`project:${filter.project}`);
+  if (filter.priority) args.push(`priority:${filter.priority}`);
+  if (filter.dueBefore) args.push(`due.before:${filter.dueBefore}`);
+  if (filter.dueAfter) args.push(`due.after:${filter.dueAfter}`);
+  for (const tag of filter.tags ?? []) args.push(`+${tag}`);
+
+  return args;
+}
+
+// ─── Operations ───────────────────────────────────────────────────────────────
+
+export async function exportTasks(filter: FilterParams = {}): Promise<Task[]> {
+  try {
+    const filterArgs = buildFilterArgs(filter);
+    const output = await runCommand('task', [...filterArgs, 'export']);
+    return JSON.parse(output) as Task[];
+  } catch (err) {
+    throw new Error(`Failed to export tasks: ${(err as Error).message}`);
+  }
+}
+
+export async function listProjects(): Promise<string[]> {
+  try {
+    const output = await runCommand('task', ['projects']);
+    return output
+      .split('\n')
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+  } catch (err) {
+    throw new Error(`Failed to list projects: ${(err as Error).message}`);
+  }
+}
+
+export async function createTask(fields: TaskFields & { description: string }): Promise<void> {
+  try {
+    const args = buildModifyArgs(fields);
+    await runCommand('task', ['add', ...args]);
+  } catch (err) {
+    throw new Error(`Failed to create task: ${(err as Error).message}`);
+  }
+}
+
+export async function modifyTask(id: string, fields: TaskFields): Promise<void> {
+  try {
+    const args = buildModifyArgs(fields);
+    await runCommand('task', [id, 'modify', ...args]);
+  } catch (err) {
+    throw new Error(`Failed to modify task ${id}: ${(err as Error).message}`);
+  }
+}
+
+export async function completeTask(id: string): Promise<void> {
+  try {
+    await runCommand('task', ['rc.confirmation=no', id, 'done']);
+  } catch (err) {
+    throw new Error(`Failed to complete task ${id}: ${(err as Error).message}`);
+  }
+}
+
+export async function deleteTask(id: string): Promise<void> {
+  try {
+    await runCommand('task', ['rc.confirmation=no', id, 'delete']);
+  } catch (err) {
+    throw new Error(`Failed to delete task ${id}: ${(err as Error).message}`);
+  }
+}
+
+export async function startTask(id: string): Promise<void> {
+  try {
+    await runCommand('task', [id, 'start']);
+  } catch (err) {
+    throw new Error(`Failed to start task ${id}: ${(err as Error).message}`);
+  }
+}
+
+export async function stopTask(id: string): Promise<void> {
+  try {
+    await runCommand('task', [id, 'stop']);
+  } catch (err) {
+    throw new Error(`Failed to stop task ${id}: ${(err as Error).message}`);
+  }
+}
+
+export async function annotateTask(id: string, annotation: string): Promise<void> {
+  try {
+    await runCommand('task', [id, 'annotate', annotation]);
+  } catch (err) {
+    throw new Error(`Failed to annotate task ${id}: ${(err as Error).message}`);
+  }
+}
+
+export interface ClaimResult {
+  claim_mode: 'acquired' | 'renewed';
+  owner_agent: string;
+  claimed_at: string;
+  lease_until: string;
+  last_renewed_at?: string;
+}
+
+export interface ReleaseResult {
+  released: boolean;
+  previous_owner?: string;
+}
+
+export interface TaskClaim {
+  owner_agent: string;
+  claimed_at: string;
+  lease_until: string;
+  last_renewed_at?: string;
+}
+
+export function isLeaseExpired(leaseUntil: string | undefined): boolean {
+  if (!leaseUntil) return true;
+  return new Date(leaseUntil) < new Date();
+}
+
+export function getTaskClaim(task: Task): TaskClaim | null {
+  if (!task.owner_agent) return null;
+  if (isLeaseExpired(task.lease_until)) return null;
+  return {
+    owner_agent: task.owner_agent,
+    claimed_at: task.claimed_at || '',
+    lease_until: task.lease_until || '',
+    last_renewed_at: task.last_renewed_at,
+  };
+}
+
+async function resolveTaskRef(taskRef: string): Promise<string> {
+  const tasks = await exportTasks({ status: 'all' });
+  const task = tasks.find((t) => String(t.id) === taskRef || t.uuid === taskRef);
+  if (!task) {
+    throw new Error(`Task not found: ${taskRef}`);
+  }
+  return task.uuid;
+}
+
+export async function claimTask(
+  taskRef: string,
+  agentId: string,
+  durationMs: number = 30 * 60 * 1000,
+): Promise<ClaimResult> {
+  const uuid = await resolveTaskRef(taskRef);
+  const tasks = await exportTasks({ status: 'all' });
+  const task = tasks.find((t) => t.uuid === uuid);
+
+  if (!task) {
+    throw new Error(`Task not found: ${taskRef}`);
+  }
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const leaseUntil = new Date(now.getTime() + durationMs).toISOString();
+
+  const existingClaim = getTaskClaim(task);
+
+  let claimMode: 'acquired' | 'renewed';
+  let lastRenewedAt: string | undefined;
+
+  if (existingClaim) {
+    if (existingClaim.owner_agent !== agentId) {
+      throw new Error(`Task is already claimed by ${existingClaim.owner_agent}`);
+    }
+    claimMode = 'renewed';
+    lastRenewedAt = nowIso;
+  } else {
+    claimMode = 'acquired';
+  }
+
+  const args = [
+    uuid,
+    'modify',
+    `owner_agent:${agentId}`,
+    `claimed_at:${nowIso}`,
+    `lease_until:${leaseUntil}`,
+  ];
+
+  if (lastRenewedAt) {
+    args.push(`last_renewed_at:${lastRenewedAt}`);
+  }
+
+  try {
+    await runCommand('task', args);
+  } catch (err) {
+    throw new Error(`Failed to claim task ${taskRef}: ${(err as Error).message}`);
+  }
+
+  return {
+    claim_mode: claimMode,
+    owner_agent: agentId,
+    claimed_at: claimMode === 'acquired' ? nowIso : task.claimed_at || nowIso,
+    lease_until: leaseUntil,
+    last_renewed_at: lastRenewedAt,
+  };
+}
+
+export async function releaseTask(taskRef: string, agentId: string): Promise<ReleaseResult> {
+  const uuid = await resolveTaskRef(taskRef);
+  const tasks = await exportTasks({ status: 'all' });
+  const task = tasks.find((t) => t.uuid === uuid);
+
+  if (!task) {
+    throw new Error(`Task not found: ${taskRef}`);
+  }
+
+  const existingClaim = getTaskClaim(task);
+
+  if (existingClaim && existingClaim.owner_agent !== agentId) {
+    throw new Error(`Cannot release: task is claimed by ${existingClaim.owner_agent}`);
+  }
+
+  if (!task.owner_agent) {
+    return { released: false };
+  }
+
+  if (task.owner_agent !== agentId && isLeaseExpired(task.lease_until)) {
+    return { released: false };
+  }
+
+  const previousOwner = task.owner_agent;
+
+  try {
+    await runCommand('task', [
+      uuid,
+      'modify',
+      'owner_agent:',
+      'claimed_at:',
+      'lease_until:',
+      'last_renewed_at:',
+    ]);
+  } catch (err) {
+    throw new Error(`Failed to release task ${taskRef}: ${(err as Error).message}`);
+  }
+
+  return { released: true, previous_owner: previousOwner };
+}

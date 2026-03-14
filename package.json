@@ -1,0 +1,60 @@
+{
+  "name": "taskwarrior-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Taskwarrior — list, create, update, complete, claim and release tasks via the Model Context Protocol",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "taskwarrior-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "bun --watch src/index.ts",
+    "start": "bun run dist/index.js",
+    "test": "bunx vitest run",
+    "test:watch": "bunx vitest",
+    "lint": "bunx eslint src tests --max-warnings 0",
+    "format": "bunx prettier --write src tests",
+    "format:check": "bunx prettier --check src tests",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm test && npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "taskwarrior",
+    "task-management",
+    "model-context-protocol",
+    "ai",
+    "agent"
+  ],
+  "author": "maxronner",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://codeberg.org/maxronner/taskwarrior-mcp.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/bun": "latest",
+    "@types/node": "^25.5.0",
+    "eslint": "^9.39.4",
+    "prettier": "^3.8.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.57.0",
+    "vitest": "^3.2.4"
+  }
+}
