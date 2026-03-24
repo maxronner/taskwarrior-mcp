@@ -29,8 +29,20 @@ const server = new McpServer({
 
 const idParam = z.string().describe('Task ID or UUID');
 const agentIdParam = z.string().describe('Agent identifier claiming this task');
+const optionalAgentIdParam = z.string().optional().describe('Agent identifier (optional for single-agent use)');
 const priorityParam = z.enum(['H', 'M', 'L']).optional().describe('Priority: H, M, or L');
-const tagsParam = z.array(z.string()).optional().describe('Tags to add');
+/** Coerce JSON-stringified arrays (e.g. '["a","b"]') that LLM clients sometimes send. */
+function coerceStringArray(val: unknown): unknown {
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed;
+    } catch { /* let Zod validate */ }
+  }
+  return val;
+}
+
+const tagsParam = z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('Tags to add');
 const dateParam = z
   .string()
   .optional()
@@ -146,7 +158,7 @@ server.tool(
     scheduled: dateParam,
     wait: dateParam,
     until: dateParam,
-    depends: z.array(z.string()).optional().describe('UUIDs this task depends on'),
+    depends: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('UUIDs this task depends on'),
   },
   async (params) => {
     await createTask({
@@ -166,20 +178,20 @@ server.tool(
 
 server.tool(
   'update_task',
-  'Update fields on an existing task. Requires active claim by the calling agent.',
+  'Update fields on an existing task. If agent_id is provided, validates the calling agent holds an active claim.',
   {
     id: idParam,
-    agent_id: agentIdParam,
+    agent_id: optionalAgentIdParam,
     description: z.string().optional().describe('New description'),
     project: z.string().optional().describe('New project'),
     priority: priorityParam,
     tags: tagsParam,
-    remove_tags: z.array(z.string()).optional().describe('Tags to remove'),
+    remove_tags: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('Tags to remove'),
     due: dateParam,
     scheduled: dateParam,
     wait: dateParam,
     until: dateParam,
-    depends: z.array(z.string()).optional().describe('UUIDs this task depends on'),
+    depends: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('UUIDs this task depends on'),
   },
   async ({ id, agent_id, remove_tags, ...fields }) => {
     const tasks = await exportTasks({ status: 'all' });
@@ -191,7 +203,9 @@ server.tool(
       };
     }
 
-    validateMutationRights(task, agent_id, 'update');
+    if (agent_id) {
+      validateMutationRights(task, agent_id, 'update');
+    }
 
     await modifyTask(id, {
       description: fields.description,
@@ -211,10 +225,10 @@ server.tool(
 
 server.tool(
   'complete_task',
-  'Mark a task as done. Requires active claim by the calling agent.',
+  'Mark a task as done. If agent_id is provided, validates the calling agent holds an active claim.',
   {
     id: idParam,
-    agent_id: agentIdParam,
+    agent_id: optionalAgentIdParam,
   },
   async ({ id, agent_id }) => {
     const tasks = await exportTasks({ status: 'all' });
@@ -226,7 +240,9 @@ server.tool(
       };
     }
 
-    validateMutationRights(task, agent_id, 'complete');
+    if (agent_id) {
+      validateMutationRights(task, agent_id, 'complete');
+    }
 
     await completeTask(id);
     return { content: [{ type: 'text', text: `Task ${id} completed.` }] };

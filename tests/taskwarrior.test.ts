@@ -21,6 +21,7 @@ import {
   releaseTask,
   getTaskClaim,
   isLeaseExpired,
+  parseTaskwarriorDate,
 } from '../src/taskwarrior.js';
 
 const mockRun = vi.mocked(runCommand);
@@ -286,6 +287,24 @@ describe('buildModifyArgs', () => {
   });
 });
 
+describe('parseTaskwarriorDate', () => {
+  it('parses ISO extended format', () => {
+    const d = parseTaskwarriorDate('2024-06-15T10:30:45Z');
+    expect(d.getTime()).toBe(new Date('2024-06-15T10:30:45Z').getTime());
+  });
+
+  it('parses Taskwarrior compact format', () => {
+    const d = parseTaskwarriorDate('20240615T103045Z');
+    expect(d.getTime()).toBe(new Date('2024-06-15T10:30:45Z').getTime());
+  });
+
+  it('both formats produce equivalent dates', () => {
+    const iso = parseTaskwarriorDate('2024-01-01T00:00:00Z');
+    const compact = parseTaskwarriorDate('20240101T000000Z');
+    expect(iso.getTime()).toBe(compact.getTime());
+  });
+});
+
 describe('isLeaseExpired', () => {
   it('returns true for undefined', () => {
     expect(isLeaseExpired(undefined)).toBe(true);
@@ -301,6 +320,18 @@ describe('isLeaseExpired', () => {
 
   it('returns false for future date', () => {
     expect(isLeaseExpired('2099-01-01T00:00:00.000Z')).toBe(false);
+  });
+
+  it('returns true for past compact date', () => {
+    expect(isLeaseExpired('20200101T000000Z')).toBe(true);
+  });
+
+  it('returns false for future compact date', () => {
+    expect(isLeaseExpired('20990101T000000Z')).toBe(false);
+  });
+
+  it('returns true for invalid date string', () => {
+    expect(isLeaseExpired('not-a-date')).toBe(true);
   });
 });
 
@@ -380,6 +411,8 @@ describe('claimTask', () => {
     mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
     mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
     mockRun.mockResolvedValueOnce('Modified 1 task.');
+    // Verification export after modify
+    mockRun.mockResolvedValueOnce(JSON.stringify([{ ...unclaimedTask, owner_agent: 'agent1' }]));
 
     const result = await claimTask('abc-123', 'agent1', 1800000);
 
@@ -393,6 +426,8 @@ describe('claimTask', () => {
     mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
     mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
     mockRun.mockResolvedValueOnce('Modified 1 task.');
+    // Verification export after modify
+    mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
 
     const result = await claimTask('abc-123', 'agent1', 1800000);
 
@@ -417,10 +452,24 @@ describe('claimTask', () => {
     mockRun.mockResolvedValueOnce(JSON.stringify([expiredTask]));
     mockRun.mockResolvedValueOnce(JSON.stringify([expiredTask]));
     mockRun.mockResolvedValueOnce('Modified 1 task.');
+    // Verification export after modify
+    mockRun.mockResolvedValueOnce(JSON.stringify([{ ...expiredTask, owner_agent: 'agent2' }]));
 
     const result = await claimTask('abc-123', 'agent2', 1800000);
 
     expect(result.claim_mode).toBe('acquired');
+  });
+
+  it('throws descriptive error when UDAs are not persisted', async () => {
+    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
+    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
+    mockRun.mockResolvedValueOnce('Modified 1 task.');
+    // Verification export returns task WITHOUT owner_agent (UDA not configured)
+    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
+
+    await expect(claimTask('abc-123', 'agent1', 1800000)).rejects.toThrow(
+      'UDA fields not persisted',
+    );
   });
 
   it('throws when task not found', async () => {
@@ -522,6 +571,8 @@ describe('concurrent claim conflicts', () => {
     mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
     mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
     mockRun.mockResolvedValueOnce('Modified 1 task.');
+    // Verification export after modify
+    mockRun.mockResolvedValueOnce(JSON.stringify([{ ...unclaimedTask, owner_agent: 'agent1' }]));
 
     const result = await claimTask('abc-123', 'agent1', 1800000);
 

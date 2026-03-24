@@ -192,9 +192,24 @@ export interface TaskClaim {
   last_renewed_at?: string;
 }
 
+/**
+ * Parse dates in both ISO extended (2026-03-24T10:30:45Z) and
+ * Taskwarrior compact (20260324T103045Z) formats.
+ */
+export function parseTaskwarriorDate(dateStr: string): Date {
+  const compact = dateStr.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (compact) {
+    const [, y, mo, d, h, mi, s] = compact;
+    return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}Z`);
+  }
+  return new Date(dateStr);
+}
+
 export function isLeaseExpired(leaseUntil: string | undefined): boolean {
   if (!leaseUntil) return true;
-  return new Date(leaseUntil) < new Date();
+  const parsed = parseTaskwarriorDate(leaseUntil);
+  if (isNaN(parsed.getTime())) return true;
+  return parsed < new Date();
 }
 
 export function getTaskClaim(task: Task): TaskClaim | null {
@@ -265,6 +280,22 @@ export async function claimTask(
     await runCommand('task', args);
   } catch (err) {
     throw new Error(`Failed to claim task ${taskRef}: ${(err as Error).message}`);
+  }
+
+  // Verify UDA fields were actually persisted
+  try {
+    const verifyOutput = await runCommand('task', [uuid, 'export']);
+    const verified = JSON.parse(verifyOutput) as Task[];
+    const verifiedTask = verified[0];
+    if (!verifiedTask?.owner_agent) {
+      throw new Error(
+        'UDA fields not persisted after claim. Ensure owner_agent, lease_until, ' +
+          'claimed_at, and last_renewed_at UDAs are configured in .taskrc. See README for setup.',
+      );
+    }
+  } catch (err) {
+    if ((err as Error).message.includes('UDA fields not persisted')) throw err;
+    // Non-fatal: verification export failed but claim modify succeeded
   }
 
   return {
