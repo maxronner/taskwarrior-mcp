@@ -557,7 +557,7 @@ describe('releaseTask', () => {
 });
 
 describe('concurrent claim conflicts', () => {
-  it('race condition: two agents claim same unclaimed task concurrently - first wins', async () => {
+  it('unique agent_id prevents collisions between parallel agents', async () => {
     const unclaimedTask: Task = {
       id: 1,
       uuid: 'abc-123',
@@ -568,19 +568,19 @@ describe('concurrent claim conflicts', () => {
       urgency: 2.0,
     };
 
+    // First agent claims with unique ID
     mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
     mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
     mockRun.mockResolvedValueOnce('Modified 1 task.');
-    // Verification export after modify
-    mockRun.mockResolvedValueOnce(JSON.stringify([{ ...unclaimedTask, owner_agent: 'agent1' }]));
+    mockRun.mockResolvedValueOnce(JSON.stringify([{ ...unclaimedTask, owner_agent: 'claude-opus-aaa' }]));
 
-    const result = await claimTask('abc-123', 'agent1', 1800000);
+    const result = await claimTask('abc-123', 'claude-opus-aaa', 1800000);
 
     expect(result.claim_mode).toBe('acquired');
-    expect(result.owner_agent).toBe('agent1');
+    expect(result.owner_agent).toBe('claude-opus-aaa');
   });
 
-  it('second claim attempt after first succeeds should fail', async () => {
+  it('second agent with different unique id cannot claim already-claimed task', async () => {
     const claimedTask: Task = {
       id: 1,
       uuid: 'abc-123',
@@ -589,7 +589,7 @@ describe('concurrent claim conflicts', () => {
       entry: '20240101T000000Z',
       modified: '20240101T000000Z',
       urgency: 2.0,
-      owner_agent: 'agent1',
+      owner_agent: 'claude-opus-aaa',
       claimed_at: '20240101T000000Z',
       lease_until: '2099-01-01T00:00:00.000Z',
     };
@@ -597,8 +597,8 @@ describe('concurrent claim conflicts', () => {
     mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
     mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
 
-    await expect(claimTask('abc-123', 'agent2', 1800000)).rejects.toThrow(
-      'Task is already claimed by agent1',
+    await expect(claimTask('abc-123', 'claude-opus-bbb', 1800000)).rejects.toThrow(
+      'Task is already claimed by claude-opus-aaa',
     );
   });
 });

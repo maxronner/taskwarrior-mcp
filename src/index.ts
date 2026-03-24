@@ -28,7 +28,7 @@ const server = new McpServer({
 // ─── Shared schema fragments ──────────────────────────────────────────────────
 
 const idParam = z.string().describe('Task ID or UUID');
-const agentIdParam = z.string().describe('Agent identifier claiming this task');
+const agentIdParam = z.string().describe('Globally unique agent identifier (e.g. "claude-opus-<uuid>"). Each agent instance MUST use a distinct ID to prevent collisions between parallel agents.');
 const optionalAgentIdParam = z.string().optional().describe('Agent identifier (optional for single-agent use)');
 const priorityParam = z.enum(['H', 'M', 'L']).optional().describe('Priority: H, M, or L');
 /** Coerce JSON-stringified arrays (e.g. '["a","b"]') that LLM clients sometimes send. */
@@ -100,7 +100,7 @@ server.tool('project_list', 'List all projects in Taskwarrior', {}, async () => 
 
 server.tool(
   'claim_task',
-  'Claim a task for an agent. Acquire a new claim or renew an existing one.',
+  'Claim a task for an agent instance. Each agent instance MUST use a globally unique agent_id (e.g. "claude-opus-<uuid>") to prevent collisions between parallel agents.',
   {
     id: idParam,
     agent_id: agentIdParam,
@@ -119,7 +119,7 @@ server.tool(
 
 server.tool(
   'release_task',
-  'Release a claim on a task.',
+  'Release a claim on a task. The agent_id must match the one used to claim it.',
   {
     id: idParam,
     agent_id: agentIdParam,
