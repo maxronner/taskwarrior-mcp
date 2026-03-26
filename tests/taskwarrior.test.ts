@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, mock, beforeEach, type Mock } from 'bun:test';
 import type { Task } from '../src/taskwarrior.js';
 
 // Mock at the I/O boundary — the exec wrapper, not internal logic
-vi.mock('../src/exec.js', () => ({
-  runCommand: vi.fn(),
+mock.module('../src/exec.js', () => ({
+  runCommand: mock(),
 }));
 
 import { runCommand } from '../src/exec.js';
@@ -17,15 +17,13 @@ import {
   stopTask,
   annotateTask,
   buildModifyArgs,
-  claimTask,
-  releaseTask,
   getTaskClaim,
   isLeaseExpired,
   parseTaskwarriorDate,
   toTaskwarriorDate,
 } from '../src/taskwarrior.js';
 
-const mockRun = vi.mocked(runCommand);
+const mockRun = runCommand as Mock<typeof runCommand>;
 
 const sampleTask: Task = {
   id: 1,
@@ -37,8 +35,32 @@ const sampleTask: Task = {
   urgency: 2.0,
 };
 
+const claimedTask: Task = {
+  ...sampleTask,
+  owner_agent: 'agent1',
+  claimed_at: '20240101T000000Z',
+  lease_until: '2099-01-01T00:00:00.000Z',
+};
+
+/**
+ * Set up mocks for ensureClaim's internal calls (resolveTaskRef + exportTasks + modify + verify).
+ * Returns the task list so the caller can add operation-specific mocks after.
+ */
+function mockEnsureClaim(task: Task, verifiedTask?: Task): void {
+  // resolveTaskRef → exportTasks({status:'all'})
+  mockRun.mockResolvedValueOnce(JSON.stringify([task]));
+  // ensureClaim → exportTasks({status:'all'})
+  mockRun.mockResolvedValueOnce(JSON.stringify([task]));
+  // ensureClaim → task modify (claim UDAs)
+  mockRun.mockResolvedValueOnce('Modified 1 task.');
+  // ensureClaim → verification export
+  mockRun.mockResolvedValueOnce(
+    JSON.stringify([verifiedTask ?? { ...task, owner_agent: 'agent1' }]),
+  );
+}
+
 beforeEach(() => {
-  vi.resetAllMocks();
+  mockRun.mockReset();
 });
 
 describe('exportTasks', () => {
@@ -158,92 +180,97 @@ describe('createTask', () => {
 });
 
 describe('modifyTask', () => {
-  it('modifies task description', async () => {
-    mockRun.mockResolvedValue('Modified 1 task.');
+  it('claims then modifies task using resolved UUID', async () => {
+    mockEnsureClaim(sampleTask);
+    mockRun.mockResolvedValueOnce('Modified 1 task.');
 
-    await modifyTask('1', { description: 'Updated description' });
+    await modifyTask('1', { description: 'Updated description' }, 'agent1');
 
-    expect(mockRun).toHaveBeenCalledWith('task', ['1', 'modify', 'Updated description']);
+    // The 5th call (index 4) is the actual modify, using UUID not ID
+    expect(mockRun.mock.calls[4]).toEqual(['task', ['abc-123', 'modify', 'Updated description']]);
   });
 
-  it('modifies project', async () => {
-    mockRun.mockResolvedValue('Modified 1 task.');
+  it('throws when modify command fails', async () => {
+    mockEnsureClaim(sampleTask);
+    mockRun.mockRejectedValueOnce(new Error('No matches'));
 
-    await modifyTask('1', { project: 'personal' });
-
-    const args = mockRun.mock.calls[0][1];
-    expect(args).toContain('project:personal');
-  });
-
-  it('removes a tag with minus prefix', async () => {
-    mockRun.mockResolvedValue('Modified 1 task.');
-
-    await modifyTask('1', { removeTags: ['old'] });
-
-    const args = mockRun.mock.calls[0][1];
-    expect(args).toContain('-old');
-  });
-
-  it('throws a descriptive error when modify fails', async () => {
-    mockRun.mockRejectedValue(new Error('No matches'));
-
-    await expect(modifyTask('999', { description: 'x' })).rejects.toThrow('Failed to modify task');
+    await expect(modifyTask('1', { description: 'x' }, 'agent1')).rejects.toThrow(
+      'Failed to modify task',
+    );
   });
 });
 
 describe('completeTask', () => {
-  it('marks a task done by id', async () => {
-    mockRun.mockResolvedValue('Completed task 1.');
+  it('claims, completes, then releases', async () => {
+    mockEnsureClaim(sampleTask);
+    // complete
+    mockRun.mockResolvedValueOnce('Completed task 1.');
+    // releaseClaim modify
+    mockRun.mockResolvedValueOnce('Modified 1 task.');
 
-    await completeTask('1');
+    await completeTask('1', 'agent1');
 
-    expect(mockRun).toHaveBeenCalledWith('task', ['rc.confirmation=no', '1', 'done']);
+    expect(mockRun.mock.calls[4]).toEqual([
+      'task',
+      ['rc.confirmation=no', 'abc-123', 'done'],
+    ]);
+    // Release clears UDAs
+    expect(mockRun.mock.calls[5][1]).toContain('owner_agent:');
   });
 
-  it('throws a descriptive error when done fails', async () => {
-    mockRun.mockRejectedValue(new Error('No matches'));
+  it('throws when done command fails', async () => {
+    mockEnsureClaim(sampleTask);
+    mockRun.mockRejectedValueOnce(new Error('No matches'));
 
-    await expect(completeTask('999')).rejects.toThrow('Failed to complete task');
+    await expect(completeTask('1', 'agent1')).rejects.toThrow('Failed to complete task');
   });
 });
 
 describe('deleteTask', () => {
-  it('deletes a task by id', async () => {
-    mockRun.mockResolvedValue('Deleted task 1.');
+  it('claims, deletes, then releases', async () => {
+    mockEnsureClaim(sampleTask);
+    mockRun.mockResolvedValueOnce('Deleted task 1.');
+    mockRun.mockResolvedValueOnce('Modified 1 task.');
 
-    await deleteTask('1');
+    await deleteTask('1', 'agent1');
 
-    expect(mockRun).toHaveBeenCalledWith('task', ['rc.confirmation=no', '1', 'delete']);
+    expect(mockRun.mock.calls[4]).toEqual([
+      'task',
+      ['rc.confirmation=no', 'abc-123', 'delete'],
+    ]);
   });
 });
 
 describe('startTask', () => {
-  it('starts a task by id', async () => {
-    mockRun.mockResolvedValue('Started task 1.');
+  it('claims then starts using resolved UUID', async () => {
+    mockEnsureClaim(sampleTask);
+    mockRun.mockResolvedValueOnce('Started task 1.');
 
-    await startTask('1');
+    await startTask('1', 'agent1');
 
-    expect(mockRun).toHaveBeenCalledWith('task', ['1', 'start']);
+    expect(mockRun.mock.calls[4]).toEqual(['task', ['abc-123', 'start']]);
   });
 });
 
 describe('stopTask', () => {
-  it('stops a task by id', async () => {
-    mockRun.mockResolvedValue('Stopped task 1.');
+  it('claims then stops using resolved UUID', async () => {
+    mockEnsureClaim(sampleTask);
+    mockRun.mockResolvedValueOnce('Stopped task 1.');
 
-    await stopTask('1');
+    await stopTask('1', 'agent1');
 
-    expect(mockRun).toHaveBeenCalledWith('task', ['1', 'stop']);
+    expect(mockRun.mock.calls[4]).toEqual(['task', ['abc-123', 'stop']]);
   });
 });
 
 describe('annotateTask', () => {
-  it('adds an annotation to a task', async () => {
-    mockRun.mockResolvedValue('Annotated task 1.');
+  it('claims then annotates using resolved UUID', async () => {
+    mockEnsureClaim(sampleTask);
+    mockRun.mockResolvedValueOnce('Annotated task 1.');
 
-    await annotateTask('1', 'See issue #42');
+    await annotateTask('1', 'See issue #42', 'agent1');
 
-    expect(mockRun).toHaveBeenCalledWith('task', ['1', 'annotate', 'See issue #42']);
+    expect(mockRun.mock.calls[4]).toEqual(['task', ['abc-123', 'annotate', 'See issue #42']]);
   });
 });
 
@@ -362,27 +389,12 @@ describe('isLeaseExpired', () => {
 
 describe('getTaskClaim', () => {
   it('returns null when task has no owner_agent', () => {
-    const task: Task = {
-      id: 1,
-      uuid: 'abc',
-      description: 'test',
-      status: 'pending',
-      entry: '',
-      modified: '',
-      urgency: 0,
-    };
-    expect(getTaskClaim(task)).toBeNull();
+    expect(getTaskClaim(sampleTask)).toBeNull();
   });
 
   it('returns null when lease is expired', () => {
     const task: Task = {
-      id: 1,
-      uuid: 'abc',
-      description: 'test',
-      status: 'pending',
-      entry: '',
-      modified: '',
-      urgency: 0,
+      ...sampleTask,
       owner_agent: 'agent1',
       lease_until: '2020-01-01T00:00:00.000Z',
     };
@@ -390,254 +402,78 @@ describe('getTaskClaim', () => {
   });
 
   it('returns claim when task has valid claim', () => {
-    const task: Task = {
-      id: 1,
-      uuid: 'abc',
-      description: 'test',
-      status: 'pending',
-      entry: '',
-      modified: '',
-      urgency: 0,
-      owner_agent: 'agent1',
-      claimed_at: '2024-01-01T00:00:00.000Z',
-      lease_until: '2099-01-01T00:00:00.000Z',
-    };
-    const claim = getTaskClaim(task);
+    const claim = getTaskClaim(claimedTask);
     expect(claim).not.toBeNull();
     expect(claim?.owner_agent).toBe('agent1');
   });
 });
 
-describe('claimTask', () => {
-  const unclaimedTask: Task = {
-    id: 1,
-    uuid: 'abc-123',
-    description: 'Test task',
-    status: 'pending',
-    entry: '20240101T000000Z',
-    modified: '20240101T000000Z',
-    urgency: 2.0,
-  };
+describe('auto-claim behavior', () => {
+  it('acquires claim on unclaimed task', async () => {
+    mockEnsureClaim(sampleTask);
+    mockRun.mockResolvedValueOnce('Started task 1.');
 
-  const claimedTask: Task = {
-    id: 1,
-    uuid: 'abc-123',
-    description: 'Test task',
-    status: 'pending',
-    entry: '20240101T000000Z',
-    modified: '20240101T000000Z',
-    urgency: 2.0,
-    owner_agent: 'agent1',
-    claimed_at: '20240101T000000Z',
-    lease_until: '2099-01-01T00:00:00.000Z',
-  };
+    await startTask('1', 'agent1');
 
-  it('acquires unclaimed task', async () => {
-    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
-    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
-    mockRun.mockResolvedValueOnce('Modified 1 task.');
-    // Verification export after modify
-    mockRun.mockResolvedValueOnce(JSON.stringify([{ ...unclaimedTask, owner_agent: 'agent1' }]));
-
-    const result = await claimTask('abc-123', 'agent1', 1800000);
-
-    expect(result.claim_mode).toBe('acquired');
-    expect(result.owner_agent).toBe('agent1');
-    expect(result.claimed_at).toBeDefined();
-    expect(result.lease_until).toBeDefined();
+    // The modify call (index 2) should set owner_agent
+    const modifyArgs = mockRun.mock.calls[2][1] as string[];
+    expect(modifyArgs).toContain('owner_agent:agent1');
+    expect(modifyArgs.some((a: string) => a.startsWith('claimed_at:'))).toBe(true);
   });
 
-  it('sets lease_until in the future, not the past', async () => {
-    const before = Date.now();
-    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
-    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
-    mockRun.mockResolvedValueOnce('Modified 1 task.');
-    mockRun.mockResolvedValueOnce(JSON.stringify([{ ...unclaimedTask, owner_agent: 'agent1' }]));
+  it('renews lease for same agent', async () => {
+    mockEnsureClaim(claimedTask);
+    mockRun.mockResolvedValueOnce('Started task 1.');
 
-    const result = await claimTask('abc-123', 'agent1', 1800000);
+    await startTask('1', 'agent1');
 
-    const leaseDate = parseTaskwarriorDate(result.lease_until);
-    expect(leaseDate.getTime()).toBeGreaterThan(before);
-    expect(leaseDate.getTime()).toBeGreaterThanOrEqual(before + 1800000 - 1000);
+    const modifyArgs = mockRun.mock.calls[2][1] as string[];
+    expect(modifyArgs.some((a: string) => a.startsWith('last_renewed_at:'))).toBe(true);
   });
 
-  it('renews same-agent lease', async () => {
+  it('rejects mutation by different agent on claimed task', async () => {
+    // resolveTaskRef
     mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
-    mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
-    mockRun.mockResolvedValueOnce('Modified 1 task.');
-    // Verification export after modify
-    mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
-
-    const result = await claimTask('abc-123', 'agent1', 1800000);
-
-    expect(result.claim_mode).toBe('renewed');
-    expect(result.last_renewed_at).toBeDefined();
-  });
-
-  it('rejects different-agent active lease', async () => {
-    mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
+    // ensureClaim's exportTasks
     mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
 
-    await expect(claimTask('abc-123', 'agent2', 1800000)).rejects.toThrow(
+    await expect(startTask('1', 'agent2')).rejects.toThrow(
       'Task is already claimed by agent1',
     );
   });
 
-  it('succeeds on expired lease (treat as unclaimed)', async () => {
+  it('allows claim on expired lease', async () => {
     const expiredTask: Task = {
       ...claimedTask,
       lease_until: '2020-01-01T00:00:00.000Z',
     };
-    mockRun.mockResolvedValueOnce(JSON.stringify([expiredTask]));
-    mockRun.mockResolvedValueOnce(JSON.stringify([expiredTask]));
-    mockRun.mockResolvedValueOnce('Modified 1 task.');
-    // Verification export after modify
-    mockRun.mockResolvedValueOnce(JSON.stringify([{ ...expiredTask, owner_agent: 'agent2' }]));
+    mockEnsureClaim(expiredTask, { ...expiredTask, owner_agent: 'agent2' });
+    mockRun.mockResolvedValueOnce('Started task 1.');
 
-    const result = await claimTask('abc-123', 'agent2', 1800000);
+    await startTask('1', 'agent2');
 
-    expect(result.claim_mode).toBe('acquired');
+    const modifyArgs = mockRun.mock.calls[2][1] as string[];
+    expect(modifyArgs).toContain('owner_agent:agent2');
   });
 
-  it('throws descriptive error when UDAs are not persisted', async () => {
-    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
-    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
+  it('throws when UDAs are not persisted', async () => {
+    // resolveTaskRef
+    mockRun.mockResolvedValueOnce(JSON.stringify([sampleTask]));
+    // ensureClaim's exportTasks
+    mockRun.mockResolvedValueOnce(JSON.stringify([sampleTask]));
+    // modify
     mockRun.mockResolvedValueOnce('Modified 1 task.');
-    // Verification export returns task WITHOUT owner_agent (UDA not configured)
-    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
+    // verification returns task WITHOUT owner_agent
+    mockRun.mockResolvedValueOnce(JSON.stringify([sampleTask]));
 
-    await expect(claimTask('abc-123', 'agent1', 1800000)).rejects.toThrow(
-      'UDA fields not persisted',
-    );
+    await expect(startTask('1', 'agent1')).rejects.toThrow('UDA fields not persisted');
   });
 
   it('throws when task not found', async () => {
     mockRun.mockResolvedValueOnce(JSON.stringify([]));
 
-    await expect(claimTask('nonexistent', 'agent1', 1800000)).rejects.toThrow(
+    await expect(startTask('nonexistent', 'agent1')).rejects.toThrow(
       'Task not found: nonexistent',
-    );
-  });
-});
-
-describe('releaseTask', () => {
-  const claimedTask: Task = {
-    id: 1,
-    uuid: 'abc-123',
-    description: 'Test task',
-    status: 'pending',
-    entry: '20240101T000000Z',
-    modified: '20240101T000000Z',
-    urgency: 2.0,
-    owner_agent: 'agent1',
-    claimed_at: '20240101T000000Z',
-    lease_until: '2099-01-01T00:00:00.000Z',
-  };
-
-  it('releases same-agent active lease', async () => {
-    mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
-    mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
-    mockRun.mockResolvedValueOnce('Modified 1 task.');
-
-    const result = await releaseTask('abc-123', 'agent1');
-
-    expect(result.released).toBe(true);
-    expect(result.previous_owner).toBe('agent1');
-  });
-
-  it('rejects different-agent active lease', async () => {
-    mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
-    mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
-
-    await expect(releaseTask('abc-123', 'agent2')).rejects.toThrow(
-      'Cannot release: task is claimed by agent1',
-    );
-  });
-
-  it('idempotent for unclaimed task', async () => {
-    const unclaimedTask: Task = {
-      id: 1,
-      uuid: 'abc-123',
-      description: 'Test task',
-      status: 'pending',
-      entry: '20240101T000000Z',
-      modified: '20240101T000000Z',
-      urgency: 2.0,
-    };
-    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
-    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
-
-    const result = await releaseTask('abc-123', 'agent1');
-
-    expect(result.released).toBe(false);
-  });
-
-  it('idempotent for same-agent expired lease', async () => {
-    const expiredTask: Task = {
-      ...claimedTask,
-      lease_until: '2020-01-01T00:00:00.000Z',
-    };
-    mockRun.mockResolvedValueOnce(JSON.stringify([expiredTask]));
-    mockRun.mockResolvedValueOnce(JSON.stringify([expiredTask]));
-    mockRun.mockResolvedValueOnce('Modified 1 task.');
-
-    const result = await releaseTask('abc-123', 'agent1');
-
-    expect(result.released).toBe(true);
-  });
-
-  it('throws when task not found', async () => {
-    mockRun.mockResolvedValueOnce(JSON.stringify([]));
-
-    await expect(releaseTask('nonexistent', 'agent1')).rejects.toThrow(
-      'Task not found: nonexistent',
-    );
-  });
-});
-
-describe('concurrent claim conflicts', () => {
-  it('unique agent_id prevents collisions between parallel agents', async () => {
-    const unclaimedTask: Task = {
-      id: 1,
-      uuid: 'abc-123',
-      description: 'Test task',
-      status: 'pending',
-      entry: '20240101T000000Z',
-      modified: '20240101T000000Z',
-      urgency: 2.0,
-    };
-
-    // First agent claims with unique ID
-    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
-    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
-    mockRun.mockResolvedValueOnce('Modified 1 task.');
-    mockRun.mockResolvedValueOnce(JSON.stringify([{ ...unclaimedTask, owner_agent: 'claude-opus-aaa' }]));
-
-    const result = await claimTask('abc-123', 'claude-opus-aaa', 1800000);
-
-    expect(result.claim_mode).toBe('acquired');
-    expect(result.owner_agent).toBe('claude-opus-aaa');
-  });
-
-  it('second agent with different unique id cannot claim already-claimed task', async () => {
-    const claimedTask: Task = {
-      id: 1,
-      uuid: 'abc-123',
-      description: 'Test task',
-      status: 'pending',
-      entry: '20240101T000000Z',
-      modified: '20240101T000000Z',
-      urgency: 2.0,
-      owner_agent: 'claude-opus-aaa',
-      claimed_at: '20240101T000000Z',
-      lease_until: '2099-01-01T00:00:00.000Z',
-    };
-
-    mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
-    mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
-
-    await expect(claimTask('abc-123', 'claude-opus-bbb', 1800000)).rejects.toThrow(
-      'Task is already claimed by claude-opus-aaa',
     );
   });
 });
