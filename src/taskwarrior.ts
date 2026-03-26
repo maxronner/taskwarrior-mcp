@@ -124,57 +124,57 @@ export async function createTask(fields: TaskFields & { description: string }): 
 }
 
 export async function modifyTask(id: string, fields: TaskFields, agentId: string): Promise<void> {
-  await ensureClaim(id, agentId);
+  const uuid = await ensureClaim(id, agentId);
   try {
     const args = buildModifyArgs(fields);
-    await runCommand('task', [id, 'modify', ...args]);
+    await runCommand('task', [uuid, 'modify', ...args]);
   } catch (err) {
     throw new Error(`Failed to modify task ${id}: ${(err as Error).message}`);
   }
 }
 
 export async function completeTask(id: string, agentId: string): Promise<void> {
-  await ensureClaim(id, agentId);
+  const uuid = await ensureClaim(id, agentId);
   try {
-    await runCommand('task', ['rc.confirmation=no', id, 'done']);
+    await runCommand('task', ['rc.confirmation=no', uuid, 'done']);
   } catch (err) {
     throw new Error(`Failed to complete task ${id}: ${(err as Error).message}`);
   }
-  await releaseClaim(id);
+  await releaseClaim(uuid);
 }
 
 export async function deleteTask(id: string, agentId: string): Promise<void> {
-  await ensureClaim(id, agentId);
+  const uuid = await ensureClaim(id, agentId);
   try {
-    await runCommand('task', ['rc.confirmation=no', id, 'delete']);
+    await runCommand('task', ['rc.confirmation=no', uuid, 'delete']);
   } catch (err) {
     throw new Error(`Failed to delete task ${id}: ${(err as Error).message}`);
   }
-  await releaseClaim(id);
+  await releaseClaim(uuid);
 }
 
 export async function startTask(id: string, agentId: string): Promise<void> {
-  await ensureClaim(id, agentId);
+  const uuid = await ensureClaim(id, agentId);
   try {
-    await runCommand('task', [id, 'start']);
+    await runCommand('task', [uuid, 'start']);
   } catch (err) {
     throw new Error(`Failed to start task ${id}: ${(err as Error).message}`);
   }
 }
 
 export async function stopTask(id: string, agentId: string): Promise<void> {
-  await ensureClaim(id, agentId);
+  const uuid = await ensureClaim(id, agentId);
   try {
-    await runCommand('task', [id, 'stop']);
+    await runCommand('task', [uuid, 'stop']);
   } catch (err) {
     throw new Error(`Failed to stop task ${id}: ${(err as Error).message}`);
   }
 }
 
 export async function annotateTask(id: string, annotation: string, agentId: string): Promise<void> {
-  await ensureClaim(id, agentId);
+  const uuid = await ensureClaim(id, agentId);
   try {
-    await runCommand('task', [id, 'annotate', annotation]);
+    await runCommand('task', [uuid, 'annotate', annotation]);
   } catch (err) {
     throw new Error(`Failed to annotate task ${id}: ${(err as Error).message}`);
   }
@@ -246,7 +246,7 @@ async function ensureClaim(
   taskRef: string,
   agentId: string,
   durationMs: number = 30 * 60 * 1000,
-): Promise<void> {
+): Promise<string> {
   const uuid = await resolveTaskRef(taskRef);
   const tasks = await exportTasks({ status: 'all' });
   const task = tasks.find((t) => t.uuid === uuid);
@@ -301,11 +301,11 @@ async function ensureClaim(
     if ((err as Error).message.includes('UDA fields not persisted')) throw err;
     // Non-fatal: verification export failed but claim modify succeeded
   }
+
+  return uuid;
 }
 
-async function releaseClaim(taskRef: string): Promise<void> {
-  const uuid = await resolveTaskRef(taskRef);
-
+async function releaseClaim(uuid: string): Promise<void> {
   try {
     await runCommand('task', [
       uuid,
@@ -316,6 +316,6 @@ async function releaseClaim(taskRef: string): Promise<void> {
       'last_renewed_at:',
     ]);
   } catch (err) {
-    throw new Error(`Failed to release claim on task ${taskRef}: ${(err as Error).message}`);
+    throw new Error(`Failed to release claim on task ${uuid}: ${(err as Error).message}`);
   }
 }
