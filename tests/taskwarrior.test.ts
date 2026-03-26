@@ -22,6 +22,7 @@ import {
   getTaskClaim,
   isLeaseExpired,
   parseTaskwarriorDate,
+  toTaskwarriorDate,
 } from '../src/taskwarrior.js';
 
 const mockRun = vi.mocked(runCommand);
@@ -305,6 +306,30 @@ describe('parseTaskwarriorDate', () => {
   });
 });
 
+describe('toTaskwarriorDate', () => {
+  it('produces compact UTC format', () => {
+    const d = new Date('2026-03-26T04:15:52.180Z');
+    expect(toTaskwarriorDate(d)).toBe('20260326T041552Z');
+  });
+
+  it('round-trips through parseTaskwarriorDate', () => {
+    const d = new Date('2024-06-15T10:30:45.999Z');
+    const compact = toTaskwarriorDate(d);
+    const parsed = parseTaskwarriorDate(compact);
+    expect(parsed.getUTCFullYear()).toBe(2024);
+    expect(parsed.getUTCMonth()).toBe(5);
+    expect(parsed.getUTCDate()).toBe(15);
+    expect(parsed.getUTCHours()).toBe(10);
+    expect(parsed.getUTCMinutes()).toBe(30);
+    expect(parsed.getUTCSeconds()).toBe(45);
+  });
+
+  it('pads single-digit components', () => {
+    const d = new Date('2024-01-02T03:04:05Z');
+    expect(toTaskwarriorDate(d)).toBe('20240102T030405Z');
+  });
+});
+
 describe('isLeaseExpired', () => {
   it('returns true for undefined', () => {
     expect(isLeaseExpired(undefined)).toBe(true);
@@ -420,6 +445,20 @@ describe('claimTask', () => {
     expect(result.owner_agent).toBe('agent1');
     expect(result.claimed_at).toBeDefined();
     expect(result.lease_until).toBeDefined();
+  });
+
+  it('sets lease_until in the future, not the past', async () => {
+    const before = Date.now();
+    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
+    mockRun.mockResolvedValueOnce(JSON.stringify([unclaimedTask]));
+    mockRun.mockResolvedValueOnce('Modified 1 task.');
+    mockRun.mockResolvedValueOnce(JSON.stringify([{ ...unclaimedTask, owner_agent: 'agent1' }]));
+
+    const result = await claimTask('abc-123', 'agent1', 1800000);
+
+    const leaseDate = parseTaskwarriorDate(result.lease_until);
+    expect(leaseDate.getTime()).toBeGreaterThan(before);
+    expect(leaseDate.getTime()).toBeGreaterThanOrEqual(before + 1800000 - 1000);
   });
 
   it('renews same-agent lease', async () => {

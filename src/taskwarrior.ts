@@ -193,6 +193,15 @@ export interface TaskClaim {
 }
 
 /**
+ * Format a Date as Taskwarrior compact UTC: YYYYMMDDTHHMMSSz.
+ * Taskwarrior's UDA date parser misinterprets ISO-8601 Z-suffixed dates
+ * as local time, so we must use the compact format for correct UTC storage.
+ */
+export function toTaskwarriorDate(d: Date): string {
+  return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+}
+
+/**
  * Parse dates in both ISO extended (2026-03-24T10:30:45Z) and
  * Taskwarrior compact (20260324T103045Z) formats.
  */
@@ -246,8 +255,8 @@ export async function claimTask(
   }
 
   const now = new Date();
-  const nowIso = now.toISOString();
-  const leaseUntil = new Date(now.getTime() + durationMs).toISOString();
+  const nowCompact = toTaskwarriorDate(now);
+  const leaseUntil = toTaskwarriorDate(new Date(now.getTime() + durationMs));
 
   const existingClaim = getTaskClaim(task);
 
@@ -259,7 +268,7 @@ export async function claimTask(
       throw new Error(`Task is already claimed by ${existingClaim.owner_agent}`);
     }
     claimMode = 'renewed';
-    lastRenewedAt = nowIso;
+    lastRenewedAt = nowCompact;
   } else {
     claimMode = 'acquired';
   }
@@ -268,7 +277,7 @@ export async function claimTask(
     uuid,
     'modify',
     `owner_agent:${agentId}`,
-    `claimed_at:${nowIso}`,
+    `claimed_at:${nowCompact}`,
     `lease_until:${leaseUntil}`,
   ];
 
@@ -301,7 +310,7 @@ export async function claimTask(
   return {
     claim_mode: claimMode,
     owner_agent: agentId,
-    claimed_at: claimMode === 'acquired' ? nowIso : task.claimed_at || nowIso,
+    claimed_at: claimMode === 'acquired' ? nowCompact : task.claimed_at || nowCompact,
     lease_until: leaseUntil,
     last_renewed_at: lastRenewedAt,
   };

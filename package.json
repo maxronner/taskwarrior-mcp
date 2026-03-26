@@ -1,6 +1,6 @@
 {
   "name": "taskwarrior-mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "MCP server for Taskwarrior — list, create, update, complete, claim and release tasks via the Model Context Protocol",
   "type": "module",
   "main": "dist/index.js",
@@ -40,7 +40,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://codeberg.org/maxronner/taskwarrior-mcp.git"
+    "url": "git+https://github.com/maxronner/taskwarrior-mcp.git"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
