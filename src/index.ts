@@ -12,12 +12,8 @@ import {
   startTask,
   stopTask,
   annotateTask,
-  claimTask,
-  releaseTask,
-  getTaskClaim,
   type Priority,
   type TaskStatus,
-  type Task,
 } from './taskwarrior.js';
 
 const server = new McpServer({
@@ -29,7 +25,6 @@ const server = new McpServer({
 
 const idParam = z.string().describe('Task ID or UUID');
 const agentIdParam = z.string().describe('Globally unique agent identifier (e.g. "claude-opus-<uuid>"). Each agent instance MUST use a distinct ID to prevent collisions between parallel agents.');
-const optionalAgentIdParam = z.string().optional().describe('Agent identifier (optional for single-agent use)');
 const priorityParam = z.enum(['H', 'M', 'L']).optional().describe('Priority: H, M, or L');
 /** Coerce JSON-stringified arrays (e.g. '["a","b"]') that LLM clients sometimes send. */
 function coerceStringArray(val: unknown): unknown {
@@ -47,22 +42,6 @@ const dateParam = z
   .string()
   .optional()
   .describe('Date in any format Taskwarrior accepts (e.g. 2024-12-25, tomorrow, eow)');
-const leaseDurationParam = z
-  .number()
-  .optional()
-  .describe('Lease duration in seconds (default: 1800 = 30 minutes)');
-
-function validateMutationRights(task: Task, agentId: string, operation: string): void {
-  const claim = getTaskClaim(task);
-
-  if (!claim) {
-    throw new Error(`${operation} requires an active claim. Use claim_task first.`);
-  }
-
-  if (claim.owner_agent !== agentId) {
-    throw new Error(`Cannot ${operation}: task is claimed by ${claim.owner_agent}`);
-  }
-}
 
 // ─── Tools ────────────────────────────────────────────────────────────────────
 
@@ -97,42 +76,6 @@ server.tool('project_list', 'List all projects in Taskwarrior', {}, async () => 
   const projects = await listProjects();
   return { content: [{ type: 'text', text: JSON.stringify(projects, null, 2) }] };
 });
-
-server.tool(
-  'claim_task',
-  'Claim a task for an agent instance. Each agent instance MUST use a globally unique agent_id (e.g. "claude-opus-<uuid>") to prevent collisions between parallel agents.',
-  {
-    id: idParam,
-    agent_id: agentIdParam,
-    lease_duration_seconds: leaseDurationParam,
-  },
-  async ({ id, agent_id, lease_duration_seconds }) => {
-    try {
-      const durationMs = (lease_duration_seconds ?? 1800) * 1000;
-      const result = await claimTask(id, agent_id, durationMs);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
-    }
-  },
-);
-
-server.tool(
-  'release_task',
-  'Release a claim on a task. The agent_id must match the one used to claim it.',
-  {
-    id: idParam,
-    agent_id: agentIdParam,
-  },
-  async ({ id, agent_id }) => {
-    try {
-      const result = await releaseTask(id, agent_id);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (err) {
-      return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
-    }
-  },
-);
 
 server.tool('get_task', 'Get a single task by ID or UUID', { id: idParam }, async ({ id }) => {
   const tasks = await exportTasks({ status: 'all' });
@@ -178,10 +121,10 @@ server.tool(
 
 server.tool(
   'update_task',
-  'Update fields on an existing task. If agent_id is provided, validates the calling agent holds an active claim.',
+  'Update fields on an existing task. Auto-claims the task for the calling agent.',
   {
     id: idParam,
-    agent_id: optionalAgentIdParam,
+    agent_id: agentIdParam,
     description: z.string().optional().describe('New description'),
     project: z.string().optional().describe('New project'),
     priority: priorityParam,
@@ -194,19 +137,6 @@ server.tool(
     depends: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('UUIDs this task depends on'),
   },
   async ({ id, agent_id, remove_tags, ...fields }) => {
-    const tasks = await exportTasks({ status: 'all' });
-    const task = tasks.find((t) => String(t.id) === id || t.uuid === id);
-    if (!task) {
-      return {
-        content: [{ type: 'text', text: `No task found with id or uuid: ${id}` }],
-        isError: true,
-      };
-    }
-
-    if (agent_id) {
-      validateMutationRights(task, agent_id, 'update');
-    }
-
     await modifyTask(id, {
       description: fields.description,
       project: fields.project,
@@ -218,71 +148,64 @@ server.tool(
       wait: fields.wait,
       until: fields.until,
       depends: fields.depends,
-    });
+    }, agent_id);
     return { content: [{ type: 'text', text: `Task ${id} updated.` }] };
   },
 );
 
 server.tool(
   'complete_task',
-  'Mark a task as done. If agent_id is provided, validates the calling agent holds an active claim.',
+  'Mark a task as done. Auto-claims then releases after completion.',
   {
     id: idParam,
-    agent_id: optionalAgentIdParam,
+    agent_id: agentIdParam,
   },
   async ({ id, agent_id }) => {
-    const tasks = await exportTasks({ status: 'all' });
-    const task = tasks.find((t) => String(t.id) === id || t.uuid === id);
-    if (!task) {
-      return {
-        content: [{ type: 'text', text: `No task found with id or uuid: ${id}` }],
-        isError: true,
-      };
-    }
-
-    if (agent_id) {
-      validateMutationRights(task, agent_id, 'complete');
-    }
-
-    await completeTask(id);
+    await completeTask(id, agent_id);
     return { content: [{ type: 'text', text: `Task ${id} completed.` }] };
   },
 );
 
-server.tool('delete_task', 'Delete a task', { id: idParam }, async ({ id }) => {
-  await deleteTask(id);
-  return { content: [{ type: 'text', text: `Task ${id} deleted.` }] };
-});
+server.tool(
+  'delete_task',
+  'Delete a task. Auto-claims then releases after deletion.',
+  { id: idParam, agent_id: agentIdParam },
+  async ({ id, agent_id }) => {
+    await deleteTask(id, agent_id);
+    return { content: [{ type: 'text', text: `Task ${id} deleted.` }] };
+  },
+);
 
 server.tool(
   'start_task',
-  'Start working on a task (sets active timer)',
-  { id: idParam },
-  async ({ id }) => {
-    await startTask(id);
+  'Start working on a task (auto-claims and sets active timer)',
+  { id: idParam, agent_id: agentIdParam },
+  async ({ id, agent_id }) => {
+    await startTask(id, agent_id);
     return { content: [{ type: 'text', text: `Task ${id} started.` }] };
   },
 );
 
 server.tool(
   'stop_task',
-  'Stop working on a task (pauses active timer)',
-  { id: idParam },
-  async ({ id }) => {
-    await stopTask(id);
+  'Stop working on a task (pauses active timer, keeps claim)',
+  { id: idParam, agent_id: agentIdParam },
+  async ({ id, agent_id }) => {
+    await stopTask(id, agent_id);
     return { content: [{ type: 'text', text: `Task ${id} stopped.` }] };
   },
 );
 
 server.tool(
   'annotate_task',
-  'Add an annotation (note) to a task',
+  'Add an annotation (note) to a task (auto-claims, renews lease)',
   {
     id: idParam,
+    agent_id: agentIdParam,
     annotation: z.string().describe('The annotation text to add'),
   },
-  async ({ id, annotation }) => {
-    await annotateTask(id, annotation);
+  async ({ id, agent_id, annotation }) => {
+    await annotateTask(id, annotation, agent_id);
     return { content: [{ type: 'text', text: `Annotation added to task ${id}.` }] };
   },
 );

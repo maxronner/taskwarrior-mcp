@@ -123,7 +123,8 @@ export async function createTask(fields: TaskFields & { description: string }): 
   }
 }
 
-export async function modifyTask(id: string, fields: TaskFields): Promise<void> {
+export async function modifyTask(id: string, fields: TaskFields, agentId: string): Promise<void> {
+  await ensureClaim(id, agentId);
   try {
     const args = buildModifyArgs(fields);
     await runCommand('task', [id, 'modify', ...args]);
@@ -132,23 +133,28 @@ export async function modifyTask(id: string, fields: TaskFields): Promise<void> 
   }
 }
 
-export async function completeTask(id: string): Promise<void> {
+export async function completeTask(id: string, agentId: string): Promise<void> {
+  await ensureClaim(id, agentId);
   try {
     await runCommand('task', ['rc.confirmation=no', id, 'done']);
   } catch (err) {
     throw new Error(`Failed to complete task ${id}: ${(err as Error).message}`);
   }
+  await releaseClaim(id);
 }
 
-export async function deleteTask(id: string): Promise<void> {
+export async function deleteTask(id: string, agentId: string): Promise<void> {
+  await ensureClaim(id, agentId);
   try {
     await runCommand('task', ['rc.confirmation=no', id, 'delete']);
   } catch (err) {
     throw new Error(`Failed to delete task ${id}: ${(err as Error).message}`);
   }
+  await releaseClaim(id);
 }
 
-export async function startTask(id: string): Promise<void> {
+export async function startTask(id: string, agentId: string): Promise<void> {
+  await ensureClaim(id, agentId);
   try {
     await runCommand('task', [id, 'start']);
   } catch (err) {
@@ -156,7 +162,8 @@ export async function startTask(id: string): Promise<void> {
   }
 }
 
-export async function stopTask(id: string): Promise<void> {
+export async function stopTask(id: string, agentId: string): Promise<void> {
+  await ensureClaim(id, agentId);
   try {
     await runCommand('task', [id, 'stop']);
   } catch (err) {
@@ -164,7 +171,8 @@ export async function stopTask(id: string): Promise<void> {
   }
 }
 
-export async function annotateTask(id: string, annotation: string): Promise<void> {
+export async function annotateTask(id: string, annotation: string, agentId: string): Promise<void> {
+  await ensureClaim(id, agentId);
   try {
     await runCommand('task', [id, 'annotate', annotation]);
   } catch (err) {
@@ -172,20 +180,7 @@ export async function annotateTask(id: string, annotation: string): Promise<void
   }
 }
 
-export interface ClaimResult {
-  claim_mode: 'acquired' | 'renewed';
-  owner_agent: string;
-  claimed_at: string;
-  lease_until: string;
-  last_renewed_at?: string;
-}
-
-export interface ReleaseResult {
-  released: boolean;
-  previous_owner?: string;
-}
-
-export interface TaskClaim {
+interface TaskClaim {
   owner_agent: string;
   claimed_at: string;
   lease_until: string;
@@ -241,11 +236,17 @@ async function resolveTaskRef(taskRef: string): Promise<string> {
   return task.uuid;
 }
 
-export async function claimTask(
+/**
+ * Ensure the calling agent holds an active claim on the task.
+ * - Unclaimed / expired lease → acquires claim
+ * - Same agent → renews lease
+ * - Different agent → throws
+ */
+async function ensureClaim(
   taskRef: string,
   agentId: string,
   durationMs: number = 30 * 60 * 1000,
-): Promise<ClaimResult> {
+): Promise<void> {
   const uuid = await resolveTaskRef(taskRef);
   const tasks = await exportTasks({ status: 'all' });
   const task = tasks.find((t) => t.uuid === uuid);
@@ -260,29 +261,23 @@ export async function claimTask(
 
   const existingClaim = getTaskClaim(task);
 
-  let claimMode: 'acquired' | 'renewed';
-  let lastRenewedAt: string | undefined;
-
-  if (existingClaim) {
-    if (existingClaim.owner_agent !== agentId) {
-      throw new Error(`Task is already claimed by ${existingClaim.owner_agent}`);
-    }
-    claimMode = 'renewed';
-    lastRenewedAt = nowCompact;
-  } else {
-    claimMode = 'acquired';
+  if (existingClaim && existingClaim.owner_agent !== agentId) {
+    throw new Error(`Task is already claimed by ${existingClaim.owner_agent}`);
   }
+
+  const isRenewal = !!existingClaim;
 
   const args = [
     uuid,
     'modify',
     `owner_agent:${agentId}`,
-    `claimed_at:${nowCompact}`,
     `lease_until:${leaseUntil}`,
   ];
 
-  if (lastRenewedAt) {
-    args.push(`last_renewed_at:${lastRenewedAt}`);
+  if (isRenewal) {
+    args.push(`last_renewed_at:${nowCompact}`);
+  } else {
+    args.push(`claimed_at:${nowCompact}`);
   }
 
   try {
@@ -306,40 +301,10 @@ export async function claimTask(
     if ((err as Error).message.includes('UDA fields not persisted')) throw err;
     // Non-fatal: verification export failed but claim modify succeeded
   }
-
-  return {
-    claim_mode: claimMode,
-    owner_agent: agentId,
-    claimed_at: claimMode === 'acquired' ? nowCompact : task.claimed_at || nowCompact,
-    lease_until: leaseUntil,
-    last_renewed_at: lastRenewedAt,
-  };
 }
 
-export async function releaseTask(taskRef: string, agentId: string): Promise<ReleaseResult> {
+async function releaseClaim(taskRef: string): Promise<void> {
   const uuid = await resolveTaskRef(taskRef);
-  const tasks = await exportTasks({ status: 'all' });
-  const task = tasks.find((t) => t.uuid === uuid);
-
-  if (!task) {
-    throw new Error(`Task not found: ${taskRef}`);
-  }
-
-  const existingClaim = getTaskClaim(task);
-
-  if (existingClaim && existingClaim.owner_agent !== agentId) {
-    throw new Error(`Cannot release: task is claimed by ${existingClaim.owner_agent}`);
-  }
-
-  if (!task.owner_agent) {
-    return { released: false };
-  }
-
-  if (task.owner_agent !== agentId && isLeaseExpired(task.lease_until)) {
-    return { released: false };
-  }
-
-  const previousOwner = task.owner_agent;
 
   try {
     await runCommand('task', [
@@ -351,8 +316,6 @@ export async function releaseTask(taskRef: string, agentId: string): Promise<Rel
       'last_renewed_at:',
     ]);
   } catch (err) {
-    throw new Error(`Failed to release task ${taskRef}: ${(err as Error).message}`);
+    throw new Error(`Failed to release claim on task ${taskRef}: ${(err as Error).message}`);
   }
-
-  return { released: true, previous_owner: previousOwner };
 }
