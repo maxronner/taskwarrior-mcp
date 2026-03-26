@@ -60,33 +60,45 @@ server.tool(
     due_after: dateParam,
   },
   async (params) => {
-    const tasks = await exportTasks({
-      status: params.status as TaskStatus | 'all' | undefined,
-      project: params.project,
-      tags: params.tags,
-      priority: params.priority as Priority | undefined,
-      dueBefore: params.due_before,
-      dueAfter: params.due_after,
-    });
-    return { content: [{ type: 'text', text: JSON.stringify(tasks, null, 2) }] };
+    try {
+      const tasks = await exportTasks({
+        status: params.status as TaskStatus | 'all' | undefined,
+        project: params.project,
+        tags: params.tags,
+        priority: params.priority as Priority | undefined,
+        dueBefore: params.due_before,
+        dueAfter: params.due_after,
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(tasks, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
+    }
   },
 );
 
 server.tool('project_list', 'List all projects in Taskwarrior', {}, async () => {
-  const projects = await listProjects();
-  return { content: [{ type: 'text', text: JSON.stringify(projects, null, 2) }] };
+  try {
+    const projects = await listProjects();
+    return { content: [{ type: 'text', text: JSON.stringify(projects, null, 2) }] };
+  } catch (err) {
+    return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
+  }
 });
 
 server.tool('get_task', 'Get a single task by ID or UUID', { id: idParam }, async ({ id }) => {
-  const tasks = await exportTasks({ status: 'all' });
-  const task = tasks.find((t) => String(t.id) === id || t.uuid === id);
-  if (!task) {
-    return {
-      content: [{ type: 'text', text: `No task found with id or uuid: ${id}` }],
-      isError: true,
-    };
+  try {
+    const tasks = await exportTasks({ status: 'all' });
+    const task = tasks.find((t) => String(t.id) === id || t.uuid === id);
+    if (!task) {
+      return {
+        content: [{ type: 'text', text: `No task found with id or uuid: ${id}` }],
+        isError: true,
+      };
+    }
+    return { content: [{ type: 'text', text: JSON.stringify(task, null, 2) }] };
+  } catch (err) {
+    return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
   }
-  return { content: [{ type: 'text', text: JSON.stringify(task, null, 2) }] };
 });
 
 server.tool(
@@ -104,18 +116,22 @@ server.tool(
     depends: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('UUIDs this task depends on'),
   },
   async (params) => {
-    await createTask({
-      description: params.description,
-      project: params.project,
-      priority: params.priority as Priority | undefined,
-      tags: params.tags,
-      due: params.due,
-      scheduled: params.scheduled,
-      wait: params.wait,
-      until: params.until,
-      depends: params.depends,
-    });
-    return { content: [{ type: 'text', text: `Task created: ${params.description}` }] };
+    try {
+      await createTask({
+        description: params.description,
+        project: params.project,
+        priority: params.priority as Priority | undefined,
+        tags: params.tags,
+        due: params.due,
+        scheduled: params.scheduled,
+        wait: params.wait,
+        until: params.until,
+        depends: params.depends,
+      });
+      return { content: [{ type: 'text', text: `Task created: ${params.description}` }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
+    }
   },
 );
 
@@ -137,19 +153,23 @@ server.tool(
     depends: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('UUIDs this task depends on'),
   },
   async ({ id, agent_id, remove_tags, ...fields }) => {
-    await modifyTask(id, {
-      description: fields.description,
-      project: fields.project,
-      priority: fields.priority as Priority | undefined,
-      tags: fields.tags,
-      removeTags: remove_tags,
-      due: fields.due,
-      scheduled: fields.scheduled,
-      wait: fields.wait,
-      until: fields.until,
-      depends: fields.depends,
-    }, agent_id);
-    return { content: [{ type: 'text', text: `Task ${id} updated.` }] };
+    try {
+      await modifyTask(id, {
+        description: fields.description,
+        project: fields.project,
+        priority: fields.priority as Priority | undefined,
+        tags: fields.tags,
+        removeTags: remove_tags,
+        due: fields.due,
+        scheduled: fields.scheduled,
+        wait: fields.wait,
+        until: fields.until,
+        depends: fields.depends,
+      }, agent_id);
+      return { content: [{ type: 'text', text: `Task ${id} updated.` }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
+    }
   },
 );
 
@@ -161,8 +181,12 @@ server.tool(
     agent_id: agentIdParam,
   },
   async ({ id, agent_id }) => {
-    await completeTask(id, agent_id);
-    return { content: [{ type: 'text', text: `Task ${id} completed.` }] };
+    try {
+      await completeTask(id, agent_id);
+      return { content: [{ type: 'text', text: `Task ${id} completed.` }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
+    }
   },
 );
 
@@ -171,8 +195,12 @@ server.tool(
   'Delete a task. Auto-claims then releases after deletion.',
   { id: idParam, agent_id: agentIdParam },
   async ({ id, agent_id }) => {
-    await deleteTask(id, agent_id);
-    return { content: [{ type: 'text', text: `Task ${id} deleted.` }] };
+    try {
+      await deleteTask(id, agent_id);
+      return { content: [{ type: 'text', text: `Task ${id} deleted.` }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
+    }
   },
 );
 
@@ -181,8 +209,12 @@ server.tool(
   'Start working on a task (auto-claims and sets active timer)',
   { id: idParam, agent_id: agentIdParam },
   async ({ id, agent_id }) => {
-    await startTask(id, agent_id);
-    return { content: [{ type: 'text', text: `Task ${id} started.` }] };
+    try {
+      await startTask(id, agent_id);
+      return { content: [{ type: 'text', text: `Task ${id} started.` }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
+    }
   },
 );
 
@@ -191,8 +223,12 @@ server.tool(
   'Stop working on a task (pauses active timer, keeps claim)',
   { id: idParam, agent_id: agentIdParam },
   async ({ id, agent_id }) => {
-    await stopTask(id, agent_id);
-    return { content: [{ type: 'text', text: `Task ${id} stopped.` }] };
+    try {
+      await stopTask(id, agent_id);
+      return { content: [{ type: 'text', text: `Task ${id} stopped.` }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
+    }
   },
 );
 
@@ -205,8 +241,12 @@ server.tool(
     annotation: z.string().describe('The annotation text to add'),
   },
   async ({ id, agent_id, annotation }) => {
-    await annotateTask(id, annotation, agent_id);
-    return { content: [{ type: 'text', text: `Annotation added to task ${id}.` }] };
+    try {
+      await annotateTask(id, annotation, agent_id);
+      return { content: [{ type: 'text', text: `Annotation added to task ${id}.` }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
+    }
   },
 );
 

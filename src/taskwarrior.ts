@@ -227,13 +227,13 @@ export function getTaskClaim(task: Task): TaskClaim | null {
   };
 }
 
-async function resolveTaskRef(taskRef: string): Promise<string> {
+async function resolveTask(taskRef: string): Promise<Task> {
   const tasks = await exportTasks({ status: 'all' });
   const task = tasks.find((t) => String(t.id) === taskRef || t.uuid === taskRef);
   if (!task) {
     throw new Error(`Task not found: ${taskRef}`);
   }
-  return task.uuid;
+  return task;
 }
 
 /**
@@ -247,13 +247,8 @@ async function ensureClaim(
   agentId: string,
   durationMs: number = 30 * 60 * 1000,
 ): Promise<string> {
-  const uuid = await resolveTaskRef(taskRef);
-  const tasks = await exportTasks({ status: 'all' });
-  const task = tasks.find((t) => t.uuid === uuid);
-
-  if (!task) {
-    throw new Error(`Task not found: ${taskRef}`);
-  }
+  const task = await resolveTask(taskRef);
+  const uuid = task.uuid;
 
   const now = new Date();
   const nowCompact = toTaskwarriorDate(now);
@@ -278,6 +273,7 @@ async function ensureClaim(
     args.push(`last_renewed_at:${nowCompact}`);
   } else {
     args.push(`claimed_at:${nowCompact}`);
+    args.push('last_renewed_at:');
   }
 
   try {

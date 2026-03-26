@@ -43,13 +43,10 @@ const claimedTask: Task = {
 };
 
 /**
- * Set up mocks for ensureClaim's internal calls (resolveTaskRef + exportTasks + modify + verify).
- * Returns the task list so the caller can add operation-specific mocks after.
+ * Set up mocks for ensureClaim's internal calls (resolveTask + modify + verify).
  */
 function mockEnsureClaim(task: Task, verifiedTask?: Task): void {
-  // resolveTaskRef → exportTasks({status:'all'})
-  mockRun.mockResolvedValueOnce(JSON.stringify([task]));
-  // ensureClaim → exportTasks({status:'all'})
+  // resolveTask → exportTasks({status:'all'})
   mockRun.mockResolvedValueOnce(JSON.stringify([task]));
   // ensureClaim → task modify (claim UDAs)
   mockRun.mockResolvedValueOnce('Modified 1 task.');
@@ -187,7 +184,7 @@ describe('modifyTask', () => {
     await modifyTask('1', { description: 'Updated description' }, 'agent1');
 
     // The 5th call (index 4) is the actual modify, using UUID not ID
-    expect(mockRun.mock.calls[4]).toEqual(['task', ['abc-123', 'modify', 'Updated description']]);
+    expect(mockRun.mock.calls[3]).toEqual(['task', ['abc-123', 'modify', 'Updated description']]);
   });
 
   it('throws when modify command fails', async () => {
@@ -210,12 +207,28 @@ describe('completeTask', () => {
 
     await completeTask('1', 'agent1');
 
-    expect(mockRun.mock.calls[4]).toEqual([
+    expect(mockRun.mock.calls[3]).toEqual([
       'task',
       ['rc.confirmation=no', 'abc-123', 'done'],
     ]);
     // Release clears UDAs
-    expect(mockRun.mock.calls[5][1]).toContain('owner_agent:');
+    expect(mockRun.mock.calls[4][1]).toContain('owner_agent:');
+  });
+
+  it('releases claim using UUID even after task status changes', async () => {
+    mockEnsureClaim(sampleTask);
+    mockRun.mockResolvedValueOnce('Completed task 1.');
+    mockRun.mockResolvedValueOnce('Modified 1 task.');
+
+    await completeTask('1', 'agent1');
+
+    // releaseClaim uses UUID directly, not the original numeric ID
+    const releaseArgs = mockRun.mock.calls[4][1] as string[];
+    expect(releaseArgs[0]).toBe('abc-123');
+    expect(releaseArgs).toContain('owner_agent:');
+    expect(releaseArgs).toContain('claimed_at:');
+    expect(releaseArgs).toContain('lease_until:');
+    expect(releaseArgs).toContain('last_renewed_at:');
   });
 
   it('throws when done command fails', async () => {
@@ -234,7 +247,7 @@ describe('deleteTask', () => {
 
     await deleteTask('1', 'agent1');
 
-    expect(mockRun.mock.calls[4]).toEqual([
+    expect(mockRun.mock.calls[3]).toEqual([
       'task',
       ['rc.confirmation=no', 'abc-123', 'delete'],
     ]);
@@ -248,7 +261,7 @@ describe('startTask', () => {
 
     await startTask('1', 'agent1');
 
-    expect(mockRun.mock.calls[4]).toEqual(['task', ['abc-123', 'start']]);
+    expect(mockRun.mock.calls[3]).toEqual(['task', ['abc-123', 'start']]);
   });
 });
 
@@ -259,7 +272,7 @@ describe('stopTask', () => {
 
     await stopTask('1', 'agent1');
 
-    expect(mockRun.mock.calls[4]).toEqual(['task', ['abc-123', 'stop']]);
+    expect(mockRun.mock.calls[3]).toEqual(['task', ['abc-123', 'stop']]);
   });
 });
 
@@ -270,7 +283,7 @@ describe('annotateTask', () => {
 
     await annotateTask('1', 'See issue #42', 'agent1');
 
-    expect(mockRun.mock.calls[4]).toEqual(['task', ['abc-123', 'annotate', 'See issue #42']]);
+    expect(mockRun.mock.calls[3]).toEqual(['task', ['abc-123', 'annotate', 'See issue #42']]);
   });
 });
 
@@ -416,7 +429,7 @@ describe('auto-claim behavior', () => {
     await startTask('1', 'agent1');
 
     // The modify call (index 2) should set owner_agent
-    const modifyArgs = mockRun.mock.calls[2][1] as string[];
+    const modifyArgs = mockRun.mock.calls[1][1] as string[];
     expect(modifyArgs).toContain('owner_agent:agent1');
     expect(modifyArgs.some((a: string) => a.startsWith('claimed_at:'))).toBe(true);
   });
@@ -427,14 +440,12 @@ describe('auto-claim behavior', () => {
 
     await startTask('1', 'agent1');
 
-    const modifyArgs = mockRun.mock.calls[2][1] as string[];
+    const modifyArgs = mockRun.mock.calls[1][1] as string[];
     expect(modifyArgs.some((a: string) => a.startsWith('last_renewed_at:'))).toBe(true);
   });
 
   it('rejects mutation by different agent on claimed task', async () => {
-    // resolveTaskRef
-    mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
-    // ensureClaim's exportTasks
+    // resolveTask → exportTasks({status:'all'})
     mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
 
     await expect(startTask('1', 'agent2')).rejects.toThrow(
@@ -452,14 +463,12 @@ describe('auto-claim behavior', () => {
 
     await startTask('1', 'agent2');
 
-    const modifyArgs = mockRun.mock.calls[2][1] as string[];
+    const modifyArgs = mockRun.mock.calls[1][1] as string[];
     expect(modifyArgs).toContain('owner_agent:agent2');
   });
 
   it('throws when UDAs are not persisted', async () => {
-    // resolveTaskRef
-    mockRun.mockResolvedValueOnce(JSON.stringify([sampleTask]));
-    // ensureClaim's exportTasks
+    // resolveTask → exportTasks({status:'all'})
     mockRun.mockResolvedValueOnce(JSON.stringify([sampleTask]));
     // modify
     mockRun.mockResolvedValueOnce('Modified 1 task.');
