@@ -1,9 +1,9 @@
-import { describe, it, expect, mock, beforeEach, type Mock } from 'bun:test';
+import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 import type { Task } from '../src/taskwarrior.js';
 
 // Mock at the I/O boundary — the exec wrapper, not internal logic
-mock.module('../src/exec.js', () => ({
-  runCommand: mock(),
+vi.mock('../src/exec.js', () => ({
+  runCommand: vi.fn(),
 }));
 
 import { runCommand } from '../src/exec.js';
@@ -23,7 +23,7 @@ import {
   toTaskwarriorDate,
 } from '../src/taskwarrior.js';
 
-const mockRun = runCommand as Mock<typeof runCommand>;
+const mockRun = runCommand as unknown as MockInstance;
 
 const sampleTask: Task = {
   id: 1,
@@ -57,7 +57,7 @@ function mockEnsureClaim(task: Task, verifiedTask?: Task): void {
 }
 
 beforeEach(() => {
-  mockRun.mockReset();
+  vi.resetAllMocks();
 });
 
 describe('exportTasks', () => {
