@@ -123,61 +123,67 @@ export async function createTask(fields: TaskFields & { description: string }): 
   }
 }
 
-export async function modifyTask(id: string, fields: TaskFields, agentId: string): Promise<void> {
-  const uuid = await ensureClaim(id, agentId);
+export async function modifyTask(id: string, fields: TaskFields, agentId: string): Promise<string> {
+  const { uuid, description } = await ensureClaim(id, agentId);
   try {
     const args = buildModifyArgs(fields);
     await runCommand('task', [uuid, 'modify', ...args]);
   } catch (err) {
     throw new Error(`Failed to modify task ${id}: ${(err as Error).message}`);
   }
+  return description;
 }
 
-export async function completeTask(id: string, agentId: string): Promise<void> {
-  const uuid = await ensureClaim(id, agentId);
+export async function completeTask(id: string, agentId: string): Promise<string> {
+  const { uuid, description } = await ensureClaim(id, agentId);
   try {
     await runCommand('task', ['rc.confirmation=no', uuid, 'done']);
   } catch (err) {
     throw new Error(`Failed to complete task ${id}: ${(err as Error).message}`);
   }
   await releaseClaim(uuid);
+  return description;
 }
 
-export async function deleteTask(id: string, agentId: string): Promise<void> {
-  const uuid = await ensureClaim(id, agentId);
+export async function deleteTask(id: string, agentId: string): Promise<string> {
+  const { uuid, description } = await ensureClaim(id, agentId);
   try {
     await runCommand('task', ['rc.confirmation=no', uuid, 'delete']);
   } catch (err) {
     throw new Error(`Failed to delete task ${id}: ${(err as Error).message}`);
   }
   await releaseClaim(uuid);
+  return description;
 }
 
-export async function startTask(id: string, agentId: string): Promise<void> {
-  const uuid = await ensureClaim(id, agentId);
+export async function startTask(id: string, agentId: string): Promise<string> {
+  const { uuid, description } = await ensureClaim(id, agentId);
   try {
     await runCommand('task', [uuid, 'start']);
   } catch (err) {
     throw new Error(`Failed to start task ${id}: ${(err as Error).message}`);
   }
+  return description;
 }
 
-export async function stopTask(id: string, agentId: string): Promise<void> {
-  const uuid = await ensureClaim(id, agentId);
+export async function stopTask(id: string, agentId: string): Promise<string> {
+  const { uuid, description } = await ensureClaim(id, agentId);
   try {
     await runCommand('task', [uuid, 'stop']);
   } catch (err) {
     throw new Error(`Failed to stop task ${id}: ${(err as Error).message}`);
   }
+  return description;
 }
 
-export async function annotateTask(id: string, annotation: string, agentId: string): Promise<void> {
-  const uuid = await ensureClaim(id, agentId);
+export async function annotateTask(id: string, annotation: string, agentId: string): Promise<string> {
+  const { uuid, description } = await ensureClaim(id, agentId);
   try {
     await runCommand('task', [uuid, 'annotate', annotation]);
   } catch (err) {
     throw new Error(`Failed to annotate task ${id}: ${(err as Error).message}`);
   }
+  return description;
 }
 
 interface TaskClaim {
@@ -229,7 +235,7 @@ export function getTaskClaim(task: Task): TaskClaim | null {
 
 async function resolveTask(taskRef: string): Promise<Task> {
   const tasks = await exportTasks({ status: 'all' });
-  const task = tasks.find((t) => String(t.id) === taskRef || t.uuid === taskRef);
+  const task = tasks.find((t) => t.uuid === taskRef);
   if (!task) {
     throw new Error(`Task not found: ${taskRef}`);
   }
@@ -246,7 +252,7 @@ async function ensureClaim(
   taskRef: string,
   agentId: string,
   durationMs: number = 30 * 60 * 1000,
-): Promise<string> {
+): Promise<{ uuid: string; description: string }> {
   const task = await resolveTask(taskRef);
   const uuid = task.uuid;
 
@@ -298,7 +304,7 @@ async function ensureClaim(
     // Non-fatal: verification export failed but claim modify succeeded
   }
 
-  return uuid;
+  return { uuid, description: task.description };
 }
 
 async function releaseClaim(uuid: string): Promise<void> {

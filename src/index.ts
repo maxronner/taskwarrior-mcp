@@ -23,7 +23,7 @@ const server = new McpServer({
 
 // ─── Shared schema fragments ──────────────────────────────────────────────────
 
-const idParam = z.string().describe('Task ID or UUID');
+const idParam = z.string().describe('Task UUID');
 const agentIdParam = z.string().describe('Globally unique agent identifier (e.g. "claude-opus-<uuid>"). Each agent instance MUST use a distinct ID to prevent collisions between parallel agents.');
 const priorityParam = z.enum(['H', 'M', 'L']).optional().describe('Priority: H, M, or L');
 /** Coerce JSON-stringified arrays (e.g. '["a","b"]') that LLM clients sometimes send. */
@@ -85,13 +85,13 @@ server.tool('project_list', 'List all projects in Taskwarrior', {}, async () => 
   }
 });
 
-server.tool('get_task', 'Get a single task by ID or UUID', { id: idParam }, async ({ id }) => {
+server.tool('get_task', 'Get a single task by UUID', { id: idParam }, async ({ id }) => {
   try {
     const tasks = await exportTasks({ status: 'all' });
-    const task = tasks.find((t) => String(t.id) === id || t.uuid === id);
+    const task = tasks.find((t) => t.uuid === id);
     if (!task) {
       return {
-        content: [{ type: 'text', text: `No task found with id or uuid: ${id}` }],
+        content: [{ type: 'text', text: `No task found with uuid: ${id}` }],
         isError: true,
       };
     }
@@ -154,7 +154,7 @@ server.tool(
   },
   async ({ id, agent_id, remove_tags, ...fields }) => {
     try {
-      await modifyTask(id, {
+      const desc = await modifyTask(id, {
         description: fields.description,
         project: fields.project,
         priority: fields.priority as Priority | undefined,
@@ -166,7 +166,7 @@ server.tool(
         until: fields.until,
         depends: fields.depends,
       }, agent_id);
-      return { content: [{ type: 'text', text: `Task ${id} updated.` }] };
+      return { content: [{ type: 'text', text: `Task updated: "${desc}" (${id})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -182,8 +182,8 @@ server.tool(
   },
   async ({ id, agent_id }) => {
     try {
-      await completeTask(id, agent_id);
-      return { content: [{ type: 'text', text: `Task ${id} completed.` }] };
+      const desc = await completeTask(id, agent_id);
+      return { content: [{ type: 'text', text: `Task completed: "${desc}" (${id})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -196,8 +196,8 @@ server.tool(
   { id: idParam, agent_id: agentIdParam },
   async ({ id, agent_id }) => {
     try {
-      await deleteTask(id, agent_id);
-      return { content: [{ type: 'text', text: `Task ${id} deleted.` }] };
+      const desc = await deleteTask(id, agent_id);
+      return { content: [{ type: 'text', text: `Task deleted: "${desc}" (${id})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -210,8 +210,8 @@ server.tool(
   { id: idParam, agent_id: agentIdParam },
   async ({ id, agent_id }) => {
     try {
-      await startTask(id, agent_id);
-      return { content: [{ type: 'text', text: `Task ${id} started.` }] };
+      const desc = await startTask(id, agent_id);
+      return { content: [{ type: 'text', text: `Task started: "${desc}" (${id})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -224,8 +224,8 @@ server.tool(
   { id: idParam, agent_id: agentIdParam },
   async ({ id, agent_id }) => {
     try {
-      await stopTask(id, agent_id);
-      return { content: [{ type: 'text', text: `Task ${id} stopped.` }] };
+      const desc = await stopTask(id, agent_id);
+      return { content: [{ type: 'text', text: `Task stopped: "${desc}" (${id})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -242,8 +242,8 @@ server.tool(
   },
   async ({ id, agent_id, annotation }) => {
     try {
-      await annotateTask(id, annotation, agent_id);
-      return { content: [{ type: 'text', text: `Annotation added to task ${id}.` }] };
+      const desc = await annotateTask(id, annotation, agent_id);
+      return { content: [{ type: 'text', text: `Annotation added to task: "${desc}" (${id})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }

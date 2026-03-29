@@ -181,7 +181,7 @@ describe('modifyTask', () => {
     mockEnsureClaim(sampleTask);
     mockRun.mockResolvedValueOnce('Modified 1 task.');
 
-    await modifyTask('1', { description: 'Updated description' }, 'agent1');
+    await modifyTask('abc-123', { description: 'Updated description' }, 'agent1');
 
     // The 5th call (index 4) is the actual modify, using UUID not ID
     expect(mockRun.mock.calls[3]).toEqual(['task', ['abc-123', 'modify', 'Updated description']]);
@@ -191,7 +191,7 @@ describe('modifyTask', () => {
     mockEnsureClaim(sampleTask);
     mockRun.mockRejectedValueOnce(new Error('No matches'));
 
-    await expect(modifyTask('1', { description: 'x' }, 'agent1')).rejects.toThrow(
+    await expect(modifyTask('abc-123', { description: 'x' }, 'agent1')).rejects.toThrow(
       'Failed to modify task',
     );
   });
@@ -205,7 +205,7 @@ describe('completeTask', () => {
     // releaseClaim modify
     mockRun.mockResolvedValueOnce('Modified 1 task.');
 
-    await completeTask('1', 'agent1');
+    await completeTask('abc-123', 'agent1');
 
     expect(mockRun.mock.calls[3]).toEqual([
       'task',
@@ -220,7 +220,7 @@ describe('completeTask', () => {
     mockRun.mockResolvedValueOnce('Completed task 1.');
     mockRun.mockResolvedValueOnce('Modified 1 task.');
 
-    await completeTask('1', 'agent1');
+    await completeTask('abc-123', 'agent1');
 
     // releaseClaim uses UUID directly, not the original numeric ID
     const releaseArgs = mockRun.mock.calls[4][1] as string[];
@@ -235,7 +235,7 @@ describe('completeTask', () => {
     mockEnsureClaim(sampleTask);
     mockRun.mockRejectedValueOnce(new Error('No matches'));
 
-    await expect(completeTask('1', 'agent1')).rejects.toThrow('Failed to complete task');
+    await expect(completeTask('abc-123', 'agent1')).rejects.toThrow('Failed to complete task');
   });
 });
 
@@ -245,7 +245,7 @@ describe('deleteTask', () => {
     mockRun.mockResolvedValueOnce('Deleted task 1.');
     mockRun.mockResolvedValueOnce('Modified 1 task.');
 
-    await deleteTask('1', 'agent1');
+    await deleteTask('abc-123', 'agent1');
 
     expect(mockRun.mock.calls[3]).toEqual([
       'task',
@@ -259,7 +259,7 @@ describe('startTask', () => {
     mockEnsureClaim(sampleTask);
     mockRun.mockResolvedValueOnce('Started task 1.');
 
-    await startTask('1', 'agent1');
+    await startTask('abc-123', 'agent1');
 
     expect(mockRun.mock.calls[3]).toEqual(['task', ['abc-123', 'start']]);
   });
@@ -270,7 +270,7 @@ describe('stopTask', () => {
     mockEnsureClaim(sampleTask);
     mockRun.mockResolvedValueOnce('Stopped task 1.');
 
-    await stopTask('1', 'agent1');
+    await stopTask('abc-123', 'agent1');
 
     expect(mockRun.mock.calls[3]).toEqual(['task', ['abc-123', 'stop']]);
   });
@@ -281,7 +281,7 @@ describe('annotateTask', () => {
     mockEnsureClaim(sampleTask);
     mockRun.mockResolvedValueOnce('Annotated task 1.');
 
-    await annotateTask('1', 'See issue #42', 'agent1');
+    await annotateTask('abc-123', 'See issue #42', 'agent1');
 
     expect(mockRun.mock.calls[3]).toEqual(['task', ['abc-123', 'annotate', 'See issue #42']]);
   });
@@ -426,7 +426,7 @@ describe('auto-claim behavior', () => {
     mockEnsureClaim(sampleTask);
     mockRun.mockResolvedValueOnce('Started task 1.');
 
-    await startTask('1', 'agent1');
+    await startTask('abc-123', 'agent1');
 
     // The modify call (index 2) should set owner_agent
     const modifyArgs = mockRun.mock.calls[1][1] as string[];
@@ -438,7 +438,7 @@ describe('auto-claim behavior', () => {
     mockEnsureClaim(claimedTask);
     mockRun.mockResolvedValueOnce('Started task 1.');
 
-    await startTask('1', 'agent1');
+    await startTask('abc-123', 'agent1');
 
     const modifyArgs = mockRun.mock.calls[1][1] as string[];
     expect(modifyArgs.some((a: string) => a.startsWith('last_renewed_at:'))).toBe(true);
@@ -448,7 +448,7 @@ describe('auto-claim behavior', () => {
     // resolveTask → exportTasks({status:'all'})
     mockRun.mockResolvedValueOnce(JSON.stringify([claimedTask]));
 
-    await expect(startTask('1', 'agent2')).rejects.toThrow(
+    await expect(startTask('abc-123', 'agent2')).rejects.toThrow(
       'Task is already claimed by agent1',
     );
   });
@@ -461,7 +461,7 @@ describe('auto-claim behavior', () => {
     mockEnsureClaim(expiredTask, { ...expiredTask, owner_agent: 'agent2' });
     mockRun.mockResolvedValueOnce('Started task 1.');
 
-    await startTask('1', 'agent2');
+    await startTask('abc-123', 'agent2');
 
     const modifyArgs = mockRun.mock.calls[1][1] as string[];
     expect(modifyArgs).toContain('owner_agent:agent2');
@@ -475,7 +475,7 @@ describe('auto-claim behavior', () => {
     // verification returns task WITHOUT owner_agent
     mockRun.mockResolvedValueOnce(JSON.stringify([sampleTask]));
 
-    await expect(startTask('1', 'agent1')).rejects.toThrow('UDA fields not persisted');
+    await expect(startTask('abc-123', 'agent1')).rejects.toThrow('UDA fields not persisted');
   });
 
   it('throws when task not found', async () => {
