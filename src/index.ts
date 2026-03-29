@@ -23,7 +23,7 @@ const server = new McpServer({
 
 // ─── Shared schema fragments ──────────────────────────────────────────────────
 
-const idParam = z.string().describe('Task UUID');
+const idParam = z.string().uuid('Must be a UUID, not a numeric task index').describe('Task UUID (from the uuid field in list_tasks). NEVER pass a numeric task index.');
 const agentIdParam = z.string().describe('Globally unique agent identifier (e.g. "claude-opus-<uuid>"). Each agent instance MUST use a distinct ID to prevent collisions between parallel agents.');
 const priorityParam = z.enum(['H', 'M', 'L']).optional().describe('Priority: H, M, or L');
 /** Coerce JSON-stringified arrays (e.g. '["a","b"]') that LLM clients sometimes send. */
