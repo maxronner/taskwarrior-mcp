@@ -23,7 +23,7 @@ const server = new McpServer({
 
 // ─── Shared schema fragments ──────────────────────────────────────────────────
 
-const idParam = z.string().uuid('Must be a UUID, not a numeric task index').describe('Task UUID (from the uuid field in list_tasks). NEVER pass a numeric task index.');
+const uuidParam = z.string().uuid('Must be a UUID, not a numeric task index').describe('Task UUID (from the uuid field in list_tasks). NEVER pass a numeric task index.');
 const agentIdParam = z.string().describe('Globally unique agent identifier (e.g. "claude-opus-<uuid>"). Each agent instance MUST use a distinct ID to prevent collisions between parallel agents.');
 const priorityParam = z.enum(['H', 'M', 'L']).optional().describe('Priority: H, M, or L');
 /** Coerce JSON-stringified arrays (e.g. '["a","b"]') that LLM clients sometimes send. */
@@ -85,13 +85,13 @@ server.tool('project_list', 'List all projects in Taskwarrior', {}, async () => 
   }
 });
 
-server.tool('get_task', 'Get a single task by UUID', { id: idParam }, async ({ id }) => {
+server.tool('get_task', 'Get a single task by UUID', { uuid: uuidParam }, async ({ uuid }) => {
   try {
     const tasks = await exportTasks({ status: 'all' });
-    const task = tasks.find((t) => t.uuid === id);
+    const task = tasks.find((t) => t.uuid === uuid);
     if (!task) {
       return {
-        content: [{ type: 'text', text: `No task found with uuid: ${id}` }],
+        content: [{ type: 'text', text: `No task found with uuid: ${uuid}` }],
         isError: true,
       };
     }
@@ -139,7 +139,7 @@ server.tool(
   'update_task',
   'Update fields on an existing task. Auto-claims the task for the calling agent.',
   {
-    id: idParam,
+    uuid: uuidParam,
     agent_id: agentIdParam,
     description: z.string().optional().describe('New description'),
     project: z.string().optional().describe('New project'),
@@ -152,9 +152,9 @@ server.tool(
     until: dateParam,
     depends: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('UUIDs this task depends on'),
   },
-  async ({ id, agent_id, remove_tags, ...fields }) => {
+  async ({ uuid, agent_id, remove_tags, ...fields }) => {
     try {
-      const desc = await modifyTask(id, {
+      const desc = await modifyTask(uuid, {
         description: fields.description,
         project: fields.project,
         priority: fields.priority as Priority | undefined,
@@ -166,7 +166,7 @@ server.tool(
         until: fields.until,
         depends: fields.depends,
       }, agent_id);
-      return { content: [{ type: 'text', text: `Task updated: "${desc}" (${id})` }] };
+      return { content: [{ type: 'text', text: `Task updated: "${desc}" (${uuid})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -177,13 +177,13 @@ server.tool(
   'complete_task',
   'Mark a task as done. Auto-claims then releases after completion.',
   {
-    id: idParam,
+    uuid: uuidParam,
     agent_id: agentIdParam,
   },
-  async ({ id, agent_id }) => {
+  async ({ uuid, agent_id }) => {
     try {
-      const desc = await completeTask(id, agent_id);
-      return { content: [{ type: 'text', text: `Task completed: "${desc}" (${id})` }] };
+      const desc = await completeTask(uuid, agent_id);
+      return { content: [{ type: 'text', text: `Task completed: "${desc}" (${uuid})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -193,11 +193,11 @@ server.tool(
 server.tool(
   'delete_task',
   'Delete a task. Auto-claims then releases after deletion.',
-  { id: idParam, agent_id: agentIdParam },
-  async ({ id, agent_id }) => {
+  { uuid: uuidParam, agent_id: agentIdParam },
+  async ({ uuid, agent_id }) => {
     try {
-      const desc = await deleteTask(id, agent_id);
-      return { content: [{ type: 'text', text: `Task deleted: "${desc}" (${id})` }] };
+      const desc = await deleteTask(uuid, agent_id);
+      return { content: [{ type: 'text', text: `Task deleted: "${desc}" (${uuid})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -207,11 +207,11 @@ server.tool(
 server.tool(
   'start_task',
   'Start working on a task (auto-claims and sets active timer)',
-  { id: idParam, agent_id: agentIdParam },
-  async ({ id, agent_id }) => {
+  { uuid: uuidParam, agent_id: agentIdParam },
+  async ({ uuid, agent_id }) => {
     try {
-      const desc = await startTask(id, agent_id);
-      return { content: [{ type: 'text', text: `Task started: "${desc}" (${id})` }] };
+      const desc = await startTask(uuid, agent_id);
+      return { content: [{ type: 'text', text: `Task started: "${desc}" (${uuid})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -221,11 +221,11 @@ server.tool(
 server.tool(
   'stop_task',
   'Stop working on a task (pauses active timer, keeps claim)',
-  { id: idParam, agent_id: agentIdParam },
-  async ({ id, agent_id }) => {
+  { uuid: uuidParam, agent_id: agentIdParam },
+  async ({ uuid, agent_id }) => {
     try {
-      const desc = await stopTask(id, agent_id);
-      return { content: [{ type: 'text', text: `Task stopped: "${desc}" (${id})` }] };
+      const desc = await stopTask(uuid, agent_id);
+      return { content: [{ type: 'text', text: `Task stopped: "${desc}" (${uuid})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -236,14 +236,14 @@ server.tool(
   'annotate_task',
   'Add an annotation (note) to a task (auto-claims, renews lease)',
   {
-    id: idParam,
+    uuid: uuidParam,
     agent_id: agentIdParam,
     annotation: z.string().describe('The annotation text to add'),
   },
-  async ({ id, agent_id, annotation }) => {
+  async ({ uuid, agent_id, annotation }) => {
     try {
-      const desc = await annotateTask(id, annotation, agent_id);
-      return { content: [{ type: 'text', text: `Annotation added to task: "${desc}" (${id})` }] };
+      const desc = await annotateTask(uuid, annotation, agent_id);
+      return { content: [{ type: 'text', text: `Annotation added to task: "${desc}" (${uuid})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
