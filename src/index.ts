@@ -85,13 +85,13 @@ server.tool('project_list', 'List all projects in Taskwarrior', {}, async () => 
   }
 });
 
-server.tool('get_task', 'Get a single task by UUID', { uuid: uuidParam }, async ({ uuid }) => {
+server.tool('get_task', 'Get a single task by ID (numeric index) or UUID', { id: z.string().describe('Task ID (numeric index) or UUID') }, async ({ id }) => {
   try {
     const tasks = await exportTasks({ status: 'all' });
-    const task = tasks.find((t) => t.uuid === uuid);
+    const task = tasks.find((t) => String(t.id) === id || t.uuid === id);
     if (!task) {
       return {
-        content: [{ type: 'text', text: `No task found with uuid: ${uuid}` }],
+        content: [{ type: 'text', text: `No task found matching: ${id}` }],
         isError: true,
       };
     }
