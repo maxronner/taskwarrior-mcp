@@ -53,8 +53,8 @@ server.tool(
       .enum(['pending', 'completed', 'deleted', 'waiting', 'recurring', 'all'])
       .optional()
       .describe('Filter by status (default: pending)'),
-    project: z.string().optional().describe('Filter by project name'),
-    tags: tagsParam,
+    project: z.string().optional().describe('Filter by project name (supports hierarchy prefix matching, e.g. "jobfilter" matches "jobfilter.infra", "jobfilter.db"). Use project_list to discover available projects.'),
+    tags: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('Filter by tags (these are explicit +tag labels, NOT project names)'),
     priority: priorityParam,
     due_before: dateParam,
     due_after: dateParam,
