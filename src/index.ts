@@ -13,6 +13,7 @@ import {
   stopTask,
   annotateTask,
   type Priority,
+  type Task,
   type TaskStatus,
 } from './taskwarrior.js';
 
@@ -43,6 +44,15 @@ const dateParam = z
   .optional()
   .describe('Date in any format Taskwarrior accepts (e.g. 2024-12-25, tomorrow, eow)');
 
+// ─── Output formatting ───────────────────────────────────────────────────────
+
+/** Rename `id` → `index` and omit when 0 (non-pending tasks have no index). */
+function formatTaskOutput(task: Task): Record<string, unknown> {
+  const { id, ...rest } = task;
+  if (id && id !== 0) return { index: id, ...rest };
+  return rest;
+}
+
 // ─── Tools ────────────────────────────────────────────────────────────────────
 
 server.tool(
@@ -69,7 +79,7 @@ server.tool(
         dueBefore: params.due_before,
         dueAfter: params.due_after,
       });
-      return { content: [{ type: 'text', text: JSON.stringify(tasks, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(tasks.map(formatTaskOutput), null, 2) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -85,7 +95,7 @@ server.tool('project_list', 'List all projects in Taskwarrior', {}, async () => 
   }
 });
 
-server.tool('get_task', 'Get a single task by ID (numeric index) or UUID', { id: z.string().describe('Task ID (numeric index) or UUID') }, async ({ id }) => {
+server.tool('get_task', 'Get a single task by index (numeric) or UUID', { id: z.string().describe('Task index (numeric, from list_tasks) or UUID') }, async ({ id }) => {
   try {
     const tasks = await exportTasks({ status: 'all' });
     const task = tasks.find((t) => String(t.id) === id || t.uuid === id);
@@ -95,7 +105,7 @@ server.tool('get_task', 'Get a single task by ID (numeric index) or UUID', { id:
         isError: true,
       };
     }
-    return { content: [{ type: 'text', text: JSON.stringify(task, null, 2) }] };
+    return { content: [{ type: 'text', text: JSON.stringify(formatTaskOutput(task), null, 2) }] };
   } catch (err) {
     return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
   }
