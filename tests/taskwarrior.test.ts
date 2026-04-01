@@ -35,6 +35,8 @@ const sampleTask: Task = {
   urgency: 2.0,
 };
 
+const createdUuid = '123e4567-e89b-42d3-a456-426614174000';
+
 const claimedTask: Task = {
   ...sampleTask,
   owner_agent: 'agent1',
@@ -123,16 +125,24 @@ describe('exportTasks', () => {
 });
 
 describe('createTask', () => {
-  it('adds a task with description only', async () => {
-    mockRun.mockResolvedValue('Created task 1.');
+  it('returns the created task including its UUID', async () => {
+    mockRun
+      .mockResolvedValueOnce(createdUuid)
+      .mockResolvedValueOnce(JSON.stringify([{ ...sampleTask, uuid: createdUuid }]));
 
-    await createTask({ description: 'Buy milk' });
+    const task = await createTask({ description: 'Buy milk' });
 
-    expect(mockRun).toHaveBeenCalledWith('task', ['add', 'Buy milk']);
+    expect(mockRun).toHaveBeenCalledWith('task', ['rc.verbose=new-uuid', 'add', 'Buy milk']);
+    expect(mockRun).toHaveBeenCalledWith('task', [createdUuid, 'export']);
+    expect(task).toEqual({ ...sampleTask, uuid: createdUuid });
   });
 
   it('includes project when provided', async () => {
-    mockRun.mockResolvedValue('Created task 2.');
+    mockRun
+      .mockResolvedValueOnce(createdUuid)
+      .mockResolvedValueOnce(
+        JSON.stringify([{ ...sampleTask, uuid: createdUuid, id: 2, description: 'Deploy app' }]),
+      );
 
     await createTask({ description: 'Deploy app', project: 'ops' });
 
@@ -142,7 +152,11 @@ describe('createTask', () => {
   });
 
   it('includes priority when provided', async () => {
-    mockRun.mockResolvedValue('Created task 3.');
+    mockRun
+      .mockResolvedValueOnce(createdUuid)
+      .mockResolvedValueOnce(
+        JSON.stringify([{ ...sampleTask, uuid: createdUuid, id: 3, description: 'Fix bug' }]),
+      );
 
     await createTask({ description: 'Fix bug', priority: 'H' });
 
@@ -151,7 +165,11 @@ describe('createTask', () => {
   });
 
   it('includes tags when provided', async () => {
-    mockRun.mockResolvedValue('Created task 4.');
+    mockRun
+      .mockResolvedValueOnce(createdUuid)
+      .mockResolvedValueOnce(
+        JSON.stringify([{ ...sampleTask, uuid: createdUuid, id: 4, description: 'Review PR' }]),
+      );
 
     await createTask({ description: 'Review PR', tags: ['work', 'review'] });
 
@@ -161,7 +179,11 @@ describe('createTask', () => {
   });
 
   it('includes due date when provided', async () => {
-    mockRun.mockResolvedValue('Created task 5.');
+    mockRun
+      .mockResolvedValueOnce(createdUuid)
+      .mockResolvedValueOnce(
+        JSON.stringify([{ ...sampleTask, uuid: createdUuid, id: 5, description: 'Submit report' }]),
+      );
 
     await createTask({ description: 'Submit report', due: '2024-12-25' });
 
@@ -173,6 +195,22 @@ describe('createTask', () => {
     mockRun.mockRejectedValue(new Error('Permission denied'));
 
     await expect(createTask({ description: 'Test' })).rejects.toThrow('Failed to create task');
+  });
+
+  it('throws when the created task cannot be resolved to a UUID', async () => {
+    mockRun.mockResolvedValueOnce('Created task 6.');
+
+    await expect(createTask({ description: 'Unresolved task' })).rejects.toThrow(
+      'Task was created, but the server could not determine its UUID. Verify the new task before retrying.',
+    );
+  });
+
+  it('throws when the created task payload cannot be loaded', async () => {
+    mockRun.mockResolvedValueOnce(createdUuid).mockResolvedValueOnce('[]');
+
+    await expect(createTask({ description: 'Missing payload' })).rejects.toThrow(
+      `Task ${createdUuid} was created, but the server could not load its full payload. Verify the new task before retrying.`,
+    );
   });
 });
 
@@ -207,10 +245,7 @@ describe('completeTask', () => {
 
     await completeTask('abc-123', 'agent1');
 
-    expect(mockRun.mock.calls[3]).toEqual([
-      'task',
-      ['rc.confirmation=no', 'abc-123', 'done'],
-    ]);
+    expect(mockRun.mock.calls[3]).toEqual(['task', ['rc.confirmation=no', 'abc-123', 'done']]);
     // Release clears UDAs
     expect(mockRun.mock.calls[4][1]).toContain('owner_agent:');
   });
@@ -247,10 +282,7 @@ describe('deleteTask', () => {
 
     await deleteTask('abc-123', 'agent1');
 
-    expect(mockRun.mock.calls[3]).toEqual([
-      'task',
-      ['rc.confirmation=no', 'abc-123', 'delete'],
-    ]);
+    expect(mockRun.mock.calls[3]).toEqual(['task', ['rc.confirmation=no', 'abc-123', 'delete']]);
   });
 });
 
@@ -481,8 +513,6 @@ describe('auto-claim behavior', () => {
   it('throws when task not found', async () => {
     mockRun.mockResolvedValueOnce(JSON.stringify([]));
 
-    await expect(startTask('nonexistent', 'agent1')).rejects.toThrow(
-      'Task not found: nonexistent',
-    );
+    await expect(startTask('nonexistent', 'agent1')).rejects.toThrow('Task not found: nonexistent');
   });
 });

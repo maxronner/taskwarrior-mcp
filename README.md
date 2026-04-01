@@ -23,15 +23,15 @@ bun run dist/index.js
 
 ## MCP Tools
 
-| Tool            | Description                         |
-| --------------- | ----------------------------------- |
-| `project_list`  | List all projects                   |
-| `list_tasks`    | List tasks (returns claim metadata) |
-| `claim_task`    | Claim a task for an agent           |
-| `release_task`  | Release a claim                     |
-| `create_task`   | Create a new task                   |
-| `update_task`   | Update task (requires claim)        |
-| `complete_task` | Complete task (requires claim)      |
+| Tool            | Description                                        |
+| --------------- | -------------------------------------------------- |
+| `project_list`  | List all projects                                  |
+| `list_tasks`    | List tasks (returns claim metadata)                |
+| `claim_task`    | Claim a task for an agent                          |
+| `release_task`  | Release a claim                                    |
+| `create_task`   | Create a new task (returns task payload with uuid) |
+| `update_task`   | Update task (requires claim)                       |
+| `complete_task` | Complete task (requires claim)                     |
 
 ## Claim Rules
 

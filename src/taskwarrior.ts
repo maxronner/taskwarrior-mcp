@@ -114,13 +114,50 @@ export async function listProjects(): Promise<string[]> {
   }
 }
 
-export async function createTask(fields: TaskFields & { description: string }): Promise<void> {
+export async function createTask(fields: TaskFields & { description: string }): Promise<Task> {
+  let createOutput: string;
+
   try {
     const args = buildModifyArgs(fields);
-    await runCommand('task', ['add', ...args]);
+    createOutput = await runCommand('task', ['rc.verbose=new-uuid', 'add', ...args]);
   } catch (err) {
     throw new Error(`Failed to create task: ${(err as Error).message}`);
   }
+
+  let createdTaskUuid: string;
+  try {
+    createdTaskUuid = extractCreatedTaskUuid(createOutput);
+  } catch (err) {
+    throw new Error(
+      `Task was created, but the server could not determine its UUID. Verify the new task before retrying. ${(err as Error).message}`,
+    );
+  }
+
+  try {
+    const exportOutput = await runCommand('task', [createdTaskUuid, 'export']);
+    const [createdTask] = JSON.parse(exportOutput) as Task[];
+
+    if (!createdTask?.uuid) {
+      throw new Error('Could not resolve created task UUID');
+    }
+
+    return createdTask;
+  } catch (err) {
+    throw new Error(
+      `Task ${createdTaskUuid} was created, but the server could not load its full payload. Verify the new task before retrying. ${(err as Error).message}`,
+    );
+  }
+}
+
+function extractCreatedTaskUuid(output: string): string {
+  const match = output.match(
+    /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}/,
+  );
+  if (!match) {
+    throw new Error(`Could not parse created task UUID from output: ${output}`);
+  }
+
+  return match[0];
 }
 
 export async function modifyTask(id: string, fields: TaskFields, agentId: string): Promise<string> {
@@ -176,7 +213,11 @@ export async function stopTask(id: string, agentId: string): Promise<string> {
   return description;
 }
 
-export async function annotateTask(id: string, annotation: string, agentId: string): Promise<string> {
+export async function annotateTask(
+  id: string,
+  annotation: string,
+  agentId: string,
+): Promise<string> {
   const { uuid, description } = await ensureClaim(id, agentId);
   try {
     await runCommand('task', [uuid, 'annotate', annotation]);
@@ -199,7 +240,10 @@ interface TaskClaim {
  * as local time, so we must use the compact format for correct UTC storage.
  */
 export function toTaskwarriorDate(d: Date): string {
-  return d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  return d
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}/, '');
 }
 
 /**
@@ -268,12 +312,7 @@ async function ensureClaim(
 
   const isRenewal = !!existingClaim;
 
-  const args = [
-    uuid,
-    'modify',
-    `owner_agent:${agentId}`,
-    `lease_until:${leaseUntil}`,
-  ];
+  const args = [uuid, 'modify', `owner_agent:${agentId}`, `lease_until:${leaseUntil}`];
 
   if (isRenewal) {
     args.push(`last_renewed_at:${nowCompact}`);

@@ -24,8 +24,15 @@ const server = new McpServer({
 
 // ─── Shared schema fragments ──────────────────────────────────────────────────
 
-const uuidParam = z.string().uuid('Must be a UUID, not a numeric task index').describe('Task UUID (from the uuid field in list_tasks). NEVER pass a numeric task index.');
-const agentIdParam = z.string().describe('Globally unique agent identifier (e.g. "claude-opus-<uuid>"). Each agent instance MUST use a distinct ID to prevent collisions between parallel agents.');
+const uuidParam = z
+  .string()
+  .uuid('Must be a UUID, not a numeric task index')
+  .describe('Task UUID (from the uuid field in list_tasks). NEVER pass a numeric task index.');
+const agentIdParam = z
+  .string()
+  .describe(
+    'Globally unique agent identifier (e.g. "claude-opus-<uuid>"). Each agent instance MUST use a distinct ID to prevent collisions between parallel agents.',
+  );
 const priorityParam = z.enum(['H', 'M', 'L']).optional().describe('Priority: H, M, or L');
 /** Coerce JSON-stringified arrays (e.g. '["a","b"]') that LLM clients sometimes send. */
 function coerceStringArray(val: unknown): unknown {
@@ -33,12 +40,16 @@ function coerceStringArray(val: unknown): unknown {
     try {
       const parsed = JSON.parse(val);
       if (Array.isArray(parsed)) return parsed;
-    } catch { /* let Zod validate */ }
+    } catch {
+      /* let Zod validate */
+    }
   }
   return val;
 }
 
-const tagsParam = z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('Tags to add');
+const tagsParam = z
+  .preprocess(coerceStringArray, z.array(z.string()).optional())
+  .describe('Tags to add');
 const dateParam = z
   .string()
   .optional()
@@ -63,8 +74,15 @@ server.tool(
       .enum(['pending', 'completed', 'deleted', 'waiting', 'recurring', 'all'])
       .optional()
       .describe('Filter by status (default: pending)'),
-    project: z.string().optional().describe('Filter by project name (supports hierarchy prefix matching, e.g. "jobfilter" matches "jobfilter.infra", "jobfilter.db"). Use project_list to discover available projects.'),
-    tags: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('Filter by tags (these are explicit +tag labels, NOT project names)'),
+    project: z
+      .string()
+      .optional()
+      .describe(
+        'Filter by project name (supports hierarchy prefix matching, e.g. "jobfilter" matches "jobfilter.infra", "jobfilter.db"). Use project_list to discover available projects.',
+      ),
+    tags: z
+      .preprocess(coerceStringArray, z.array(z.string()).optional())
+      .describe('Filter by tags (these are explicit +tag labels, NOT project names)'),
     priority: priorityParam,
     due_before: dateParam,
     due_after: dateParam,
@@ -79,7 +97,9 @@ server.tool(
         dueBefore: params.due_before,
         dueAfter: params.due_after,
       });
-      return { content: [{ type: 'text', text: JSON.stringify(tasks.map(formatTaskOutput), null, 2) }] };
+      return {
+        content: [{ type: 'text', text: JSON.stringify(tasks.map(formatTaskOutput), null, 2) }],
+      };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -95,25 +115,30 @@ server.tool('project_list', 'List all projects in Taskwarrior', {}, async () => 
   }
 });
 
-server.tool('get_task', 'Get a single task by index (numeric) or UUID', { id: z.string().describe('Task index (numeric, from list_tasks) or UUID') }, async ({ id }) => {
-  try {
-    const tasks = await exportTasks({ status: 'all' });
-    const task = tasks.find((t) => String(t.id) === id || t.uuid === id);
-    if (!task) {
-      return {
-        content: [{ type: 'text', text: `No task found matching: ${id}` }],
-        isError: true,
-      };
+server.tool(
+  'get_task',
+  'Get a single task by index (numeric) or UUID',
+  { id: z.string().describe('Task index (numeric, from list_tasks) or UUID') },
+  async ({ id }) => {
+    try {
+      const tasks = await exportTasks({ status: 'all' });
+      const task = tasks.find((t) => String(t.id) === id || t.uuid === id);
+      if (!task) {
+        return {
+          content: [{ type: 'text', text: `No task found matching: ${id}` }],
+          isError: true,
+        };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(formatTaskOutput(task), null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
-    return { content: [{ type: 'text', text: JSON.stringify(formatTaskOutput(task), null, 2) }] };
-  } catch (err) {
-    return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
-  }
-});
+  },
+);
 
 server.tool(
   'create_task',
-  'Create a new task',
+  'Create a new task and return the created task payload, including uuid',
   {
     description: z.string().describe('Task description (required)'),
     project: z.string().optional().describe('Project name'),
@@ -123,11 +148,13 @@ server.tool(
     scheduled: dateParam,
     wait: dateParam,
     until: dateParam,
-    depends: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('UUIDs this task depends on'),
+    depends: z
+      .preprocess(coerceStringArray, z.array(z.string()).optional())
+      .describe('UUIDs this task depends on'),
   },
   async (params) => {
     try {
-      await createTask({
+      const task = await createTask({
         description: params.description,
         project: params.project,
         priority: params.priority as Priority | undefined,
@@ -138,7 +165,7 @@ server.tool(
         until: params.until,
         depends: params.depends,
       });
-      return { content: [{ type: 'text', text: `Task created: ${params.description}` }] };
+      return { content: [{ type: 'text', text: JSON.stringify(formatTaskOutput(task), null, 2) }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
     }
@@ -155,27 +182,35 @@ server.tool(
     project: z.string().optional().describe('New project'),
     priority: priorityParam,
     tags: tagsParam,
-    remove_tags: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('Tags to remove'),
+    remove_tags: z
+      .preprocess(coerceStringArray, z.array(z.string()).optional())
+      .describe('Tags to remove'),
     due: dateParam,
     scheduled: dateParam,
     wait: dateParam,
     until: dateParam,
-    depends: z.preprocess(coerceStringArray, z.array(z.string()).optional()).describe('UUIDs this task depends on'),
+    depends: z
+      .preprocess(coerceStringArray, z.array(z.string()).optional())
+      .describe('UUIDs this task depends on'),
   },
   async ({ uuid, agent_id, remove_tags, ...fields }) => {
     try {
-      const desc = await modifyTask(uuid, {
-        description: fields.description,
-        project: fields.project,
-        priority: fields.priority as Priority | undefined,
-        tags: fields.tags,
-        removeTags: remove_tags,
-        due: fields.due,
-        scheduled: fields.scheduled,
-        wait: fields.wait,
-        until: fields.until,
-        depends: fields.depends,
-      }, agent_id);
+      const desc = await modifyTask(
+        uuid,
+        {
+          description: fields.description,
+          project: fields.project,
+          priority: fields.priority as Priority | undefined,
+          tags: fields.tags,
+          removeTags: remove_tags,
+          due: fields.due,
+          scheduled: fields.scheduled,
+          wait: fields.wait,
+          until: fields.until,
+          depends: fields.depends,
+        },
+        agent_id,
+      );
       return { content: [{ type: 'text', text: `Task updated: "${desc}" (${uuid})` }] };
     } catch (err) {
       return { content: [{ type: 'text', text: (err as Error).message }], isError: true };
